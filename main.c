@@ -156,25 +156,34 @@ static char board[19][19] = {
 	{'*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*', '*'},
 };
 
+/**
+ * \var game
+ * \brief Main structure representing the game's current state
+ */
 struct {
-	char mode;
-	int high;
-	int level;
-	int lines;
-	int score;
-	int period;
-} game;
-
-char game_mode = 'a';
-int high = 0;
-int level = 0;
-int lines = 0;
-int score = 0;
-int period = INITIAL_PERIOD;
+	char mode;  /**< Game mode, 'a', 'b' or '2' (for two players) */
+	int high;   /**< Height of the handicap */
+	int level;  /**< Speed of pieces dropping */
+	int lines;  /**< Number of lines achieved so far */
+	int score;  /**< Current score of the player */
+	int period; /**< Number of loop passes between two automatic drops */
+} game = {
+		.mode =   'a',
+		.high =   0,
+		.level =  0,
+		.lines =  0,
+		.score =  0,
+		.period = INITIAL_PERIOD,
+};
 
 typedef char image[4][4];
 
-int lan_mode = NET_NONE;
+struct {
+	int mode;
+} net = {
+		.mode = NET_NONE,
+};
+
 char *addr = "localhost";
 int port = NET_DEFAULT_PORT;
 int sfd = -1;
@@ -390,7 +399,8 @@ struct current current = {
  * @param s Set of char ending with a 0
  */
 #define WRITES(s) do { \
-	size_t _i = 0; \
+	/* size_t _i = 0; */\
+	unsigned _i = 0; \
 	while (s[_i]) \
 		_i++; \
 	if (write(1, s, _i)); \
@@ -506,7 +516,7 @@ void print_board() {
 		}
 	}
 
-	print_number(17, 7, level);
+	print_number(17, 7, game.level);
 	refresh_board(0);
 }
 
@@ -648,11 +658,11 @@ void add_lines(int pending_lines) {
 }
 
 void send_msg(int code, int value) {
-	if (lan_mode) {
+	if (net.mode) {
 		char msg = MSG_BUILD(code, value);
 		int ret;
 
-		ret = write(NET_SERVER == lan_mode ? cfd : sfd, &msg, sizeof(char));
+		ret = write(NET_SERVER == net.mode ? cfd : sfd, &msg, sizeof(char));
 		if (-1 != ret && errno != EAGAIN) {
 			perror("write");
 			return;
@@ -689,26 +699,26 @@ void complete_line(int line) {
 			else
 				put_color(board[line + 1][i] - '0');
 		}
-	if (game_mode == 'b') {
-		lines--;
-		if (0 > lines)
-			lines = 0;
+	if (game.mode == 'b') {
+		game.lines--;
+		if (0 > game.lines)
+			game.lines = 0;
 	} else {
-		lines++;
-		if (lines % 10 == 0) {
-			int real_level = lines / 10;
+		game.lines++;
+		if (game.lines % 10 == 0) {
+			int real_level = game.lines / 10;
 
-			level = real_level > level ? real_level : level;
-			print_number(17, 7, level);
+			game.level = real_level > game.level ? real_level : game.level;
+			print_number(17, 7, game.level);
 		}
 	}
 
-	print_number(17, 11, lines);
-	if (9 == lines) {/* quirk for erasing leading 1, when going under 10 */
+	print_number(17, 11, game.lines);
+	if (9 == game.lines) {/* quirk for erasing leading 1, when going under 10 */
 		put_cur(16, 11);
 		WRITE(' ');
 	}
-	period = INITIAL_PERIOD - 2 * level;
+	game.period = INITIAL_PERIOD - 2 * game.level;
 }
 
 
@@ -733,12 +743,12 @@ void check_lines() {
 	}
 
 	/* update score */
-	score += coef[total] * (level + 1);
-	if ('b' != game_mode) {
-		print_number(17, 3, score);
+	game.score += coef[total] * (game.level + 1);
+	if ('b' != game.mode) {
+		print_number(17, 3, game.score);
 	}
 
-	if (lan_mode && total > 1)
+	if (net.mode && total > 1)
 		send_msg(MSG_LINES, total - 1);
 }
 
@@ -747,7 +757,7 @@ void add_crumbles() {
 	char lut[20] = {'1', '2', '3', '4', '5', '6', '7',
 		' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
 		' ', ' ', ' ', ' ', ' '};
-	int limit = 17 - 2 * high;
+	int limit = 17 - 2 * game.high;
 
 	for (j = 17; j > limit; j--)
 		for (i = 1; i < 11; i++)
@@ -806,24 +816,21 @@ int main(int argc, char *argv[]) {
 
 	/* args processing */
 	if (argc != 1) {
-		game_mode = argv[1][0];
-		switch (game_mode) {
+		game.mode = argv[1][0];
+		switch (game.mode) {
 		case 'a':
 		case 'b':
 			if (argc >= 3)
-				level = argv[2][0] - '0';
-			if ('b' == game_mode) {
-				if (argc >= 4)
-					high = argv[3][0] - '0';
-				if (high > 5 || high < 0)
-					high = 0;
-				lines = 25;
-				add_crumbles(high);
-			}
+				game.level = argv[2][0] - '0';
+			if (argc >= 4)
+				game.high = argv[3][0] - '0';
+			if (game.high > 5 || game.high < 0)
+				game.high = 0;
+			game.lines = 25;
+			add_crumbles(game.high);
 			break;
 
 		case '2':
-			game_mode = '2';
 			void_column = 1 + (my_random(0) % 10);
 			if (argc < 3) {
 				usage();
@@ -834,7 +841,7 @@ int main(int argc, char *argv[]) {
 				struct sockaddr_in csin;
 
 				printf("Server mode\n");
-				lan_mode = NET_SERVER;
+				net.mode = NET_SERVER;
 				port = atoi(argv[2] + 1);
 
 				sfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -882,7 +889,7 @@ int main(int argc, char *argv[]) {
 				struct sockaddr_in sin;
 
 				printf("Client mode\n");
-				lan_mode = NET_CLIENT;
+				net.mode = NET_CLIENT;
 				p = addr = argv[2];
 				for (; ':' != *p && '\0' != *p; p++);
 				if (*p != ':') {
@@ -916,13 +923,13 @@ int main(int argc, char *argv[]) {
 					goto out;
 			}
 			if (argc >= 4) {
-				level = argv[3][0] - '0';
+				game.level = argv[3][0] - '0';
 				if (argc >= 5)
-					high = argv[4][0] - '0';
-				if (high > 5 || high < 0)
-					high = 0;
-				lines = 25;
-				add_crumbles(high);
+					game.high = argv[4][0] - '0';
+				if (game.high > 5 || game.high < 0)
+					game.high = 0;
+				game.lines = 25;
+				add_crumbles(game.high);
 			}
 			break;
 
@@ -945,10 +952,10 @@ int main(int argc, char *argv[]) {
 	}
 
 	/* check args */
-	if (level > 9 || level < 0)
-		level = 0;
+	if (game.level > 9 || game.level < 0)
+		game.level = 0;
 
-	period = INITIAL_PERIOD - 2 * level;
+	game.period = INITIAL_PERIOD - 2 * game.level;
 
 	stdin_flags = fcntl(0, F_GETFL);
 	if (-1 == stdin_flags)
@@ -1022,7 +1029,7 @@ int main(int argc, char *argv[]) {
 		case 'q':
 			/* quit */
 			loop = 0;
-			if (lan_mode)
+			if (net.mode)
 				send_msg(MSG_QUIT, 0);
 			break;
 		}
@@ -1042,13 +1049,13 @@ int main(int argc, char *argv[]) {
 				pending_lines = 0;
 			}
 
-			if (lan_mode)
+			if (net.mode)
 				update_height();
 
 			usleep(100000);
 			freeze_down = 10;
 		}
-		if (frame >= period) {
+		if (frame >= game.period) {
 			frame = 0;
 			down();
 		}
@@ -1057,14 +1064,14 @@ int main(int argc, char *argv[]) {
 		if (!suspend)
 			frame++;
 		key = 0;
-		if (0 >= lines && 'b' == game_mode) {
+		if (0 >= game.lines && 'b' == game.mode) {
 			usleep(2000000);
 			loop = 0;
 		}
 
-		if (lan_mode) {
+		if (net.mode) {
 			/* TODO check lan messages */
-			ret = read(NET_SERVER == lan_mode ? cfd : sfd, &msg, 1);
+			ret = read(NET_SERVER == net.mode ? cfd : sfd, &msg, 1);
 			switch (ret) {
 				case -1:
 					/* TODO error */
@@ -1097,6 +1104,7 @@ int main(int argc, char *argv[]) {
 
 						default:
 							fprintf(stderr, "Unknown message\n");
+							break;
 					}
 					break;
 
@@ -1116,8 +1124,8 @@ int main(int argc, char *argv[]) {
 		WRITES("          \033[m\x0f");
 
 		usleep(2000000);
-	} else if ('b' == game_mode ||
-			('2' == game_mode && MSG_LOST == MSG_CODE(msg))) {
+	} else if ('b' == game.mode ||
+			('2' == game.mode && MSG_LOST == MSG_CODE(msg))) {
 		refresh_board(1);
 		put_cur(1, 5);
 		WRITES("\033[30;34m\033[22;41m          ");
@@ -1127,7 +1135,7 @@ int main(int argc, char *argv[]) {
 		WRITES("          \033[m\x0f");
 
 		usleep(2000000);
-	} else if ('2' == game_mode && MSG_QUIT == MSG_CODE(msg)) {
+	} else if ('2' == game.mode && MSG_QUIT == MSG_CODE(msg)) {
 		refresh_board(1);
 		put_cur(1, 5);
 		WRITES("\033[30;34m\033[22;41m          ");
@@ -1150,7 +1158,7 @@ int main(int argc, char *argv[]) {
 
 	cleanup();
 	put_cur(0, 0);
-	if ('2' == game_mode) {
+	if ('2' == game.mode) {
 		close(sfd);
 		close(cfd);
 	}
