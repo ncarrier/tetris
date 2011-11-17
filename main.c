@@ -188,6 +188,11 @@ struct {
 		.period = INITIAL_PERIOD,
 };
 
+/**
+ * \typedef image
+ * \brief type of the image a o given rotation of a piece
+ *
+ */
 typedef char image[4][4];
 
 /**
@@ -680,7 +685,7 @@ void send_msg(int code, int value) {
 		char msg = MSG_BUILD(code, value);
 		int ret;
 
-		ret = write(NET_SERVER == net.mode ? net.fd : net.sfd, &msg, sizeof(char));
+		ret = write(net.fd, &msg, sizeof(char));
 		if (-1 != ret && errno != EAGAIN) {
 			perror("write");
 			return;
@@ -934,22 +939,22 @@ int main(int argc, char *argv[]) {
 				sin.sin_family = AF_INET;
 				sin.sin_port = htons((uint16_t)net.port);
 
-				net.sfd = socket(AF_INET, SOCK_STREAM, 0);
-				if (-1 == net.sfd) {
+				net.fd = socket(AF_INET, SOCK_STREAM, 0);
+				if (-1 == net.fd) {
 					perror("socket");
 					return 1;
 				}
 				printf("Connection to %s:%d\n", net.addr, net.port);
-				ret = connect(net.sfd, (struct sockaddr *)(&sin), sizeof(sin));
+				ret = connect(net.fd, (struct sockaddr *)(&sin), sizeof(sin));
 				if (-1 == ret) {
 					perror("connect");
 					return 1;
 				}
 				printf("Connected to the server\n");
-				stdin_flags = fcntl(net.sfd, F_GETFL);
+				stdin_flags = fcntl(net.fd, F_GETFL);
 				if (-1 == stdin_flags)
 					goto out;
-				ret = fcntl(net.sfd, F_SETFL, stdin_flags|O_NONBLOCK);
+				ret = fcntl(net.fd, F_SETFL, stdin_flags|O_NONBLOCK);
 				if (-1 == ret)
 					goto out;
 			}
@@ -1102,7 +1107,7 @@ int main(int argc, char *argv[]) {
 
 		if (net.mode) {
 			/* TODO check lan messages */
-			ret = read(NET_SERVER == net.mode ? net.fd : net.sfd, &msg, 1);
+			ret = read(net.fd, &msg, 1);
 			switch (ret) {
 				case -1:
 					/* TODO error */
@@ -1190,7 +1195,8 @@ int main(int argc, char *argv[]) {
 	cleanup();
 	put_cur(0, 0);
 	if ('2' == game.mode) {
-		close(net.sfd);
+		if (-1 != net.sfd)
+			close(net.sfd);
 		close(net.fd);
 	}
 
