@@ -1,0 +1,19 @@
+usage :
+	tetris a [level]
+		Classic "survival" mode
+	tetris b [level] [high]
+		25 line to complete, with a handicap
+	tetris 2 :[port] [level [high]]
+		Launches the server for a 2 player mode listening on the port port
+	tetris 2 ip:[port] [level [high]]
+		Connects to a given server for a 2 player game
+
+	level has an influence on the speed of piece dropping and must be in [0,9]
+	high must be in [0,5] and a non zero value adds random blocks at the bottom of the grid
+
+
+	Default values are :
+		level : 0
+		high : 0
+		port : 37280
+

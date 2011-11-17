@@ -19,6 +19,18 @@
 #define WIDTH 19
 
 /**
+ * \def MIN
+ * \brief Minimum of two values
+ */
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+/**
+ * \def MAX
+ * \brief Maximum of two values
+ */
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+/**
  * \def HEIGHT
  * \brief Total height of the board including player's information column
  */
@@ -178,16 +190,24 @@ struct {
 
 typedef char image[4][4];
 
+/**
+ * \var net
+ * \brief Network related informations. Not used if mode if NET_NONE (single
+ * player)
+ */
 struct {
-	int mode;
+	int mode;   /**< One of NET_NONE, NET_SERVER and NET_CLIENT */
+	char *addr; /**< TODO make the program accept any address Address of the server */
+	int port;   /**< Port number of the connection */
+	int sfd;    /**< Socket of the server, only used by the server */
+	int fd;     /**< socket of the remote host */
 } net = {
 		.mode = NET_NONE,
+		.addr = "localhost",
+		.port = NET_DEFAULT_PORT,
+		.sfd = -1,
+		.fd = -1,
 };
-
-char *addr = "localhost";
-int port = NET_DEFAULT_PORT;
-int sfd = -1;
-int cfd = -1;
 
 /**
  * \var A0
@@ -208,10 +228,11 @@ static const image A1 = {
 };
 
 /**
- * \var _B0
+ * \var B0
  * \brief Block shaped piece
  */
-static const image _B0 = {
+#undef B0 /* Baud rate constant from termios.h */
+static const image B0 = {
 	{' ', ' ', ' ', ' '},
 	{' ', 'S', 'S', ' '},
 	{' ', 'S', 'S', ' '},
@@ -321,7 +342,6 @@ static const image F3 = {
 /**
  * \var G0
  * \brief J shaped piece
- 3 à  gauche
  */
 static const image G0 = {
 	{' ', ' ', ' ', ' '},
@@ -354,7 +374,7 @@ static const image G3 = {
 typedef image const *sprite[5];
 
 static const sprite A = {&A0,  &A1, NULL, NULL, NULL};
-static const sprite B = {&_B0, NULL, NULL, NULL, NULL};
+static const sprite B = {&B0, NULL, NULL, NULL, NULL};
 static const sprite C = {&C0,  &C1,  &C2,  &C3, NULL};
 static const sprite D = {&D0,  &D1, NULL, NULL, NULL};
 static const sprite E = {&E0,  &E1, NULL, NULL, NULL};
@@ -363,7 +383,7 @@ static const sprite G = {&G0,  &G1,  &G2,  &G3, NULL};
 
 sprite const *scale[7] = {&A, &B, &C, &D, &E, &F, &G};
 
-struct current {
+struct {
 	int piece;
 	int next_piece;
 	int ori;
@@ -373,9 +393,7 @@ struct current {
 	int y;
 	int next_y;
 	int hit;
-};
-
-struct current current = {
+} current = {
 	.y =        0,
 	.next_y =   0,
 	.x =        3,
@@ -404,7 +422,7 @@ struct current current = {
 	while (s[_i]) \
 		_i++; \
 	if (write(1, s, _i)); \
-} while(0);
+} while(0)
 
 /**
  * Place the cursor at a given position
@@ -662,7 +680,7 @@ void send_msg(int code, int value) {
 		char msg = MSG_BUILD(code, value);
 		int ret;
 
-		ret = write(NET_SERVER == net.mode ? cfd : sfd, &msg, sizeof(char));
+		ret = write(NET_SERVER == net.mode ? net.fd : net.sfd, &msg, sizeof(char));
 		if (-1 != ret && errno != EAGAIN) {
 			perror("write");
 			return;
@@ -793,12 +811,20 @@ void update_gauge(int value) {
 	}
 }
 
+/**
+ * Prints a little help about command line invocation
+ */
 void usage() {
-	WRITES("usage :\n\
-\ttetris a [level]\n\
-\ttetris b [level] [high]\n\
-\ttetris 2 :port [level [high]]\n\
-\ttetris 2 ip:port [level [high]]\n");
+	int fd = -1;
+	char buf[10];
+	ssize_t bytes_read;
+
+	fd = open("usage", O_RDONLY, 0);
+	if (-1 == fd)
+		WRITES("Can't find \"usage\" file\n");
+	else
+		while (0 < (bytes_read = read(fd, buf, 10)))
+			write(1, buf, (size_t)bytes_read);
 }
 
 int main(int argc, char *argv[]) {
@@ -842,46 +868,47 @@ int main(int argc, char *argv[]) {
 
 				printf("Server mode\n");
 				net.mode = NET_SERVER;
-				port = atoi(argv[2] + 1);
+				net.port = atoi(argv[2] + 1);
+				net.port = MIN(1025, MAX(net.port, 65536));
 
-				sfd = socket(AF_INET, SOCK_STREAM, 0);
-				if (-1 == sfd) {
+				net.sfd = socket(AF_INET, SOCK_STREAM, 0);
+				if (-1 == net.sfd) {
 					perror("Can't create network socket");
 					return 1;
 				}
 				/* Configure to allow reuse */
 				int yes = 1;
-				ret = setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+				ret = setsockopt(net.sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 				if (-1 == ret) {
 					perror("setsockopt");
 					return 1;
 				}
 				sin.sin_addr.s_addr = htonl(INADDR_ANY);
 				sin.sin_family = AF_INET;
-				sin.sin_port = htons((uint16_t)port);
-				ret = bind(sfd, (struct sockaddr*)(&sin), sizeof(sin));
+				sin.sin_port = htons((uint16_t)net.port);
+				ret = bind(net.sfd, (struct sockaddr*)(&sin), sizeof(sin));
 				if (-1 == ret) {
 					perror("bind");
 					return 1;
 				}
-				ret = listen(sfd, 1);
+				ret = listen(net.sfd, 1);
 				if (-1 == ret) {
 					perror("listen");
 					return 1;
 				}
 				socklen_t len = sizeof(csin);
 				printf("Waiting for connection\n");
-				cfd = accept(sfd, (struct sockaddr *)(&csin), &len);
-				if (-1 == cfd) {
+				net.fd = accept(net.sfd, (struct sockaddr *)(&csin), &len);
+				if (-1 == net.fd) {
 					perror("accept");
 					return 1;
 				}
 				printf("A client has connected\n");
 				/* TODO rename stdin_flags */
-				stdin_flags = fcntl(cfd, F_GETFL);
+				stdin_flags = fcntl(net.fd, F_GETFL);
 				if (-1 == stdin_flags)
 					goto out;
-				ret = fcntl(cfd, F_SETFL, stdin_flags|O_NONBLOCK);
+				ret = fcntl(net.fd, F_SETFL, stdin_flags|O_NONBLOCK);
 				if (-1 == ret)
 					goto out;
 			} else {
@@ -890,35 +917,39 @@ int main(int argc, char *argv[]) {
 
 				printf("Client mode\n");
 				net.mode = NET_CLIENT;
-				p = addr = argv[2];
+				p = net.addr = argv[2];
 				for (; ':' != *p && '\0' != *p; p++);
 				if (*p != ':') {
 					usage();
 					return 1;
 				}
 				*p = '\0';
-				port = atoi(p + 1);
+				net.port = atoi(p + 1);
+				if (0 == net.port)
+					net.port = NET_DEFAULT_PORT;
+				else
+					net.port = MIN(1025, MAX(net.port, 65536));
 
-				sin.sin_addr.s_addr = inet_addr(addr);
+				sin.sin_addr.s_addr = inet_addr(net.addr);
 				sin.sin_family = AF_INET;
-				sin.sin_port = htons((uint16_t)port);
+				sin.sin_port = htons((uint16_t)net.port);
 
-				sfd = socket(AF_INET, SOCK_STREAM, 0);
-				if (-1 == sfd) {
+				net.sfd = socket(AF_INET, SOCK_STREAM, 0);
+				if (-1 == net.sfd) {
 					perror("socket");
 					return 1;
 				}
-				printf("Connection to %s:%d\n", addr, port);
-				ret = connect(sfd, (struct sockaddr *)(&sin), sizeof(sin));
+				printf("Connection to %s:%d\n", net.addr, net.port);
+				ret = connect(net.sfd, (struct sockaddr *)(&sin), sizeof(sin));
 				if (-1 == ret) {
 					perror("connect");
 					return 1;
 				}
 				printf("Connected to the server\n");
-				stdin_flags = fcntl(sfd, F_GETFL);
+				stdin_flags = fcntl(net.sfd, F_GETFL);
 				if (-1 == stdin_flags)
 					goto out;
-				ret = fcntl(sfd, F_SETFL, stdin_flags|O_NONBLOCK);
+				ret = fcntl(net.sfd, F_SETFL, stdin_flags|O_NONBLOCK);
 				if (-1 == ret)
 					goto out;
 			}
@@ -1071,7 +1102,7 @@ int main(int argc, char *argv[]) {
 
 		if (net.mode) {
 			/* TODO check lan messages */
-			ret = read(NET_SERVER == net.mode ? cfd : sfd, &msg, 1);
+			ret = read(NET_SERVER == net.mode ? net.fd : net.sfd, &msg, 1);
 			switch (ret) {
 				case -1:
 					/* TODO error */
@@ -1159,8 +1190,8 @@ int main(int argc, char *argv[]) {
 	cleanup();
 	put_cur(0, 0);
 	if ('2' == game.mode) {
-		close(sfd);
-		close(cfd);
+		close(net.sfd);
+		close(net.fd);
 	}
 
 	return 0;
