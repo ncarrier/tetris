@@ -3,12 +3,10 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
 #include <errno.h>
 
 /* grid dimension : 10x18 */
@@ -459,7 +457,7 @@ void cleanup() {
 	int stdin_flags;
 
 	/* TODO put things in the right order */
-	if (system("stty -raw echo"));
+//	if (system("stty -raw echo"));
 	WRITES(cnorm);
 	stdin_flags = fcntl(0, F_GETFL);
 	fcntl(0, F_SETFL, stdin_flags&(~O_NONBLOCK));
@@ -541,6 +539,25 @@ void print_board() {
 
 	print_number(17, 7, game.level);
 	refresh_board(0);
+}
+
+/**
+ * Custom implementation of the libc time()
+ * @param t If non-NULL, store the returned value
+ * @return Number of elapsed seconds elapsed since the epoch
+ */
+time_t time(time_t *t) {
+	struct timeval tv;
+	int ret;
+
+	ret = gettimeofday(&tv, NULL);
+	if (-1 == ret)
+		return (time_t)-1;
+
+	if (NULL != t)
+		*t = tv.tv_sec;
+
+	return tv.tv_sec;
 }
 
 /**
@@ -680,17 +697,21 @@ void add_lines(int pending_lines) {
 	refresh_board(0);
 }
 
-void send_msg(int code, int value) {
+/**
+ * Sends a 2 player network message to the remote peer
+ * @param code Code of the tetris message to send
+ * @param value Value associated, used only by MSG_LINES and
+ * MSG_HEIGHT, ignored otherwise
+ * @return -1 in case of error, otherwise a positive value
+ */
+int send_msg(int code, int value) {
 	if (net.mode) {
 		char msg = MSG_BUILD(code, value);
-		int ret;
 
-		ret = write(net.fd, &msg, sizeof(char));
-		if (-1 != ret && errno != EAGAIN) {
-			perror("write");
-			return;
-		}
+		return write(net.fd, &msg, sizeof(char));
 	}
+
+	return -1;
 }
 
 int max_height = 0;
@@ -803,6 +824,10 @@ void in_pause() {
 	}
 }
 
+/**
+ * In 2 player mode, updates the gauge showing the height of the other player
+ * @param value Height reached by the other player
+ */
 void update_gauge(int value) {
 	int j;
 
@@ -830,6 +855,39 @@ void usage() {
 	else
 		while (0 < (bytes_read = read(fd, buf, 10)))
 			write(1, buf, (size_t)bytes_read);
+}
+
+/**
+ * Implementation of standard C library's atoi
+ * @param nptr String containing the number
+ * @return nptr Converted to a number in base 10
+ */
+int atoi(char *nptr) {
+	int ret = 0;
+
+	while (*nptr >= '0' && *nptr <= '9') {
+		ret += *nptr - '0';
+		nptr++;
+	}
+
+	return ret;
+}
+
+/**
+ * Reads the port number from a string
+ * @param port String containing the port number
+ * @return Port read, in [1025,65536]
+ */
+int read_port(char *port) {
+	int ret;
+
+	ret = atoi(port);
+	if (0 == ret)
+		ret = NET_DEFAULT_PORT;
+	else
+		ret = MIN(1025, MAX(ret, 65536));
+
+	return ret;
 }
 
 int main(int argc, char *argv[]) {
@@ -871,21 +929,20 @@ int main(int argc, char *argv[]) {
 				struct sockaddr_in sin;
 				struct sockaddr_in csin;
 
-				printf("Server mode\n");
+				WRITES("Server mode\n");
 				net.mode = NET_SERVER;
-				net.port = atoi(argv[2] + 1);
-				net.port = MIN(1025, MAX(net.port, 65536));
+				net.port = read_port(argv[2] + 1);
 
 				net.sfd = socket(AF_INET, SOCK_STREAM, 0);
 				if (-1 == net.sfd) {
-					perror("Can't create network socket");
+					WRITES("Can't create network socket");
 					return 1;
 				}
 				/* Configure to allow reuse */
 				int yes = 1;
 				ret = setsockopt(net.sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 				if (-1 == ret) {
-					perror("setsockopt");
+					WRITES("error : setsockopt");
 					return 1;
 				}
 				sin.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -893,22 +950,22 @@ int main(int argc, char *argv[]) {
 				sin.sin_port = htons((uint16_t)net.port);
 				ret = bind(net.sfd, (struct sockaddr*)(&sin), sizeof(sin));
 				if (-1 == ret) {
-					perror("bind");
+					WRITES("error : bind");
 					return 1;
 				}
 				ret = listen(net.sfd, 1);
 				if (-1 == ret) {
-					perror("listen");
+					WRITES("error : listen");
 					return 1;
 				}
 				socklen_t len = sizeof(csin);
-				printf("Waiting for connection\n");
+				WRITES("Waiting for connection\n");
 				net.fd = accept(net.sfd, (struct sockaddr *)(&csin), &len);
 				if (-1 == net.fd) {
-					perror("accept");
+					WRITES("error : accept");
 					return 1;
 				}
-				printf("A client has connected\n");
+				WRITES("A client has connected\n");
 				/* TODO rename stdin_flags */
 				stdin_flags = fcntl(net.fd, F_GETFL);
 				if (-1 == stdin_flags)
@@ -920,7 +977,7 @@ int main(int argc, char *argv[]) {
 				char *p = NULL;
 				struct sockaddr_in sin;
 
-				printf("Client mode\n");
+				WRITES("Client mode\n");
 				net.mode = NET_CLIENT;
 				p = net.addr = argv[2];
 				for (; ':' != *p && '\0' != *p; p++);
@@ -929,11 +986,7 @@ int main(int argc, char *argv[]) {
 					return 1;
 				}
 				*p = '\0';
-				net.port = atoi(p + 1);
-				if (0 == net.port)
-					net.port = NET_DEFAULT_PORT;
-				else
-					net.port = MIN(1025, MAX(net.port, 65536));
+				net.port = read_port(p + 1);
 
 				sin.sin_addr.s_addr = inet_addr(net.addr);
 				sin.sin_family = AF_INET;
@@ -941,16 +994,17 @@ int main(int argc, char *argv[]) {
 
 				net.fd = socket(AF_INET, SOCK_STREAM, 0);
 				if (-1 == net.fd) {
-					perror("socket");
+					WRITES("error : socket");
 					return 1;
 				}
-				printf("Connection to %s:%d\n", net.addr, net.port);
+				WRITES("Connection to ");
+				WRITES(net.addr);
 				ret = connect(net.fd, (struct sockaddr *)(&sin), sizeof(sin));
 				if (-1 == ret) {
-					perror("connect");
+					WRITES("error : connect");
 					return 1;
 				}
-				printf("Connected to the server\n");
+				WRITES("Connected to the server\n");
 				stdin_flags = fcntl(net.fd, F_GETFL);
 				if (-1 == stdin_flags)
 					goto out;
@@ -977,13 +1031,13 @@ int main(int argc, char *argv[]) {
 	
 	ret = tcgetattr(0, &old_tios);
 	if (-1 == ret) {
-		perror("tcgetattr");
+		WRITES("error : tcgetattr");
 		return 1;
 	}
 	cfmakeraw(&new_tios);
 	ret = tcsetattr(0, TCSANOW, &new_tios);
 	if (-1 == ret) {
-		perror("tcsetattr");
+		WRITES("error : tcsetattr");
 		return 1;
 	}
 
@@ -1112,7 +1166,7 @@ int main(int argc, char *argv[]) {
 				case -1:
 					/* TODO error */
 					if (errno != EAGAIN)
-						perror("write");
+						WRITES("error : write");
 					break;
 
 				case 1:
@@ -1139,7 +1193,7 @@ int main(int argc, char *argv[]) {
 							break;
 
 						default:
-							fprintf(stderr, "Unknown message\n");
+							WRITES("error : Unknown message\n");
 							break;
 					}
 					break;
@@ -1188,7 +1242,7 @@ int main(int argc, char *argv[]) {
 
 	ret = tcsetattr(0, TCSANOW, &old_tios);
 	if (-1 == ret) {
-		perror("tcsetattr");
+		WRITES("error : tcsetattr");
 		return 1;
 	}
 
