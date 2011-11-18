@@ -456,8 +456,6 @@ inline void put_cur(int x, int y) {
 void cleanup() {
 	int stdin_flags;
 
-	/* TODO put things in the right order */
-//	if (system("stty -raw echo"));
 	WRITES(cnorm);
 	stdin_flags = fcntl(0, F_GETFL);
 	fcntl(0, F_SETFL, stdin_flags&(~O_NONBLOCK));
@@ -890,6 +888,25 @@ int read_port(char *port) {
 	return ret;
 }
 
+void print_msg(char *msg, int fore, int back) {
+	char f = (char)(MAX(0, MIN(7, fore)) + '0');
+	char b = (char)(MAX(0, MIN(7, back)) + '0');
+
+	refresh_board(1);
+	put_cur(1, 5);
+	WRITES("\033[30;3");
+	WRITE(f);
+	WRITES("m\033[22;4");
+	WRITE(b);
+	WRITES("m          ");
+
+	put_cur(1, 6);
+	WRITES(msg);
+
+	put_cur(1, 7);
+	WRITES("          \033[m\x0f");
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int stdin_flags;
@@ -1205,35 +1222,14 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!can_move()) {
-		refresh_board(1);
-		put_cur(1, 5);
-		WRITES("\033[30;34m\033[22;41m          ");
-		put_cur(1, 6);
-		WRITES("YOU LOOSE!");
-		put_cur(1, 7);
-		WRITES("          \033[m\x0f");
-
+		print_msg("LOOSER !!!", 4, 1);
 		usleep(2000000);
 	} else if ('b' == game.mode ||
 			('2' == game.mode && MSG_LOST == MSG_CODE(msg))) {
-		refresh_board(1);
-		put_cur(1, 5);
-		WRITES("\033[30;34m\033[22;41m          ");
-		put_cur(1, 6);
-		WRITES(" YOU WON !");
-		put_cur(1, 7);
-		WRITES("          \033[m\x0f");
-
+		print_msg(" YOU WON !", 4, 2);
 		usleep(2000000);
 	} else if ('2' == game.mode && MSG_QUIT == MSG_CODE(msg)) {
-		refresh_board(1);
-		put_cur(1, 5);
-		WRITES("\033[30;34m\033[22;41m          ");
-		put_cur(1, 6);
-		WRITES("PEER LEFT ");
-		put_cur(1, 7);
-		WRITES("          \033[m\x0f");
-
+		print_msg("PEER LEFT ", 4, 3);
 		usleep(2000000);
 	}
 
