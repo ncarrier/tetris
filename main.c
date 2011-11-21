@@ -126,6 +126,18 @@
 static const char clear[] = {0x1b, 0x5b, 0x48, 0x1b, 0x5b, 0x4a, 0};
 
 /**
+ * \var civis
+ * \brief Console escape sequence to make the cursor invisible
+ */
+static const char civis[] = {0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 0};
+
+/**
+ * \var cnorm
+ * \brief Console escape sequence to make the cursor visible
+ */
+static const char cnorm[] = {0x1b, 0x5b, 0x33, 0x34, 0x68, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68, 0};
+
+/**
  * \var sgr0
  * \brief Console escape sequence to put back the font fore and back ground
  * colors to normal
@@ -452,6 +464,7 @@ inline void put_cur(int x, int y) {
 }
 
 void cleanup() {
+	WRITES(cnorm);
 	WRITE('\n');
 	WRITES(sgr0);
 	WRITES(clear);
@@ -584,7 +597,7 @@ void draw_piece(int piece, int ori, int x, int y, int draw) {
 
 void draw_current_piece(int draw) {
 	draw_piece(current.piece, current.ori, 1 + current.x, current.y, draw);
-	put_cur(0, 0);
+	put_cur(80, 80);
 }
 
 void draw_next_piece(int draw) {
@@ -1169,6 +1182,7 @@ int main(int argc, char *argv[]) {
 	if (-1 == ret)
 		goto out;
 
+	WRITES(civis);
 	WRITES(clear);
 	print_board();
 	current.next_piece = my_random(0) % 7;
