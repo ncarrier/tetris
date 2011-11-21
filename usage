@@ -1,4 +1,4 @@
-usage :
+Usage :
 	tetris a [level]
 		Classic "survival" mode
 	tetris b [level] [high]
@@ -7,6 +7,8 @@ usage :
 		Launches the server for a 2 player mode listening on the port port
 	tetris 2 ip:[port] [level [high]]
 		Connects to a given server for a 2 player game
+	tetris h
+		Prints the keys used
 
 	level has an influence on the speed of piece dropping and must be in [0,9]
 	high must be in [0,5] and a non zero value adds random blocks at the bottom of the grid

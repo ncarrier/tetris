@@ -126,18 +126,6 @@
 static const char clear[] = {0x1b, 0x5b, 0x48, 0x1b, 0x5b, 0x4a, 0};
 
 /**
- * \var civis
- * \brief Console escape sequence to make the cursor invisible
- */
-static const char civis[] = {0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 0};
-
-/**
- * \var cnorm
- * \brief Console escape sequence to make the cursor visible
- */
-static const char cnorm[] = {0x1b, 0x5b, 0x33, 0x34, 0x68, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68, 0};
-
-/**
  * \var sgr0
  * \brief Console escape sequence to put back the font fore and back ground
  * colors to normal
@@ -175,23 +163,25 @@ static char board[19][19] = {
  * \brief Main structure representing the game's current state
  */
 struct {
-	char mode;  /**< Game mode, 'a', 'b' or '2' (for two players) */
-	int high;   /**< Height of the handicap */
-	int level;  /**< Speed of pieces dropping */
-	int lines;  /**< Number of lines achieved so far */
-	int score;  /**< Current score of the player */
-	int period; /**< Number of loop passes between two automatic drops */
-	int pause;  /**< If true, the game is suspended */
-	int height; /**< Current height of the game, for network mode only */
+	char mode;    /**< Game mode, 'a', 'b' or '2' (for two players) */
+	int high;     /**< Height of the handicap */
+	int lvl;      /**< Speed of pieces dropping */
+	int lines;    /**< Number of lines achieved so far */
+	int score;    /**< Current score of the player */
+	int period;   /**< Number of loop passes between two automatic drops */
+	int pause;    /**< If true, the game is suspended */
+	int height;   /**< Current height of the game, for network mode only */
+	int void_col; /**< Index of the void column for penalties */
 } game = {
-		.mode =   'a',
-		.high =   0,
-		.level =  0,
-		.lines =  0,
-		.score =  0,
-		.period = INITIAL_PERIOD,
-		.pause = 0,
-		.height = 0,
+		.mode =     'a',
+		.high =     0,
+		.lvl =      0,
+		.lines =    0,
+		.score =    0,
+		.period =   INITIAL_PERIOD,
+		.pause =    0,
+		.height =   0,
+		.void_col = 0,
 };
 
 /**
@@ -437,8 +427,8 @@ struct {
 
 /**
  * Place the cursor at a given position
- * @param x Abscissa
- * @param y Ordinate
+ * @param x Abscissa in [0,99]
+ * @param y Ordinate in [0,99]
  */
 inline void put_cur(int x, int y) {
 	x++;
@@ -462,7 +452,6 @@ inline void put_cur(int x, int y) {
 }
 
 void cleanup() {
-	WRITES(cnorm);
 	WRITE('\n');
 	WRITES(sgr0);
 	WRITES(clear);
@@ -543,7 +532,7 @@ void print_board() {
 		}
 	}
 
-	print_number(17, 7, game.level);
+	print_number(17, 7, game.lvl);
 	refresh_board(0);
 }
 
@@ -595,6 +584,7 @@ void draw_piece(int piece, int ori, int x, int y, int draw) {
 
 void draw_current_piece(int draw) {
 	draw_piece(current.piece, current.ori, 1 + current.x, current.y, draw);
+	put_cur(0, 0);
 }
 
 void draw_next_piece(int draw) {
@@ -649,6 +639,9 @@ void try_move() {
 		cancel_move();
 }
 
+/**
+ * Makes the current piece try to go down of one step
+ */
 void down() {
 	current.next_y++;
 	try_move();
@@ -657,17 +650,6 @@ void down() {
 /**
  * TODO unused but should be...
  */
-void help() {
-	char keys[] = "q\tQuit\n\
-d\tTurn clockwise\n\
-f\tTurn counter-clockwise\n\
-j\tMove left\n\
-k\tMove down\n\
-l\tMove right\n";
-
-	WRITES(keys);
-}
-
 void get_next() {
 	draw_next_piece(0);
 	current.piece =      current.next_piece;
@@ -685,8 +667,6 @@ void get_next() {
 	draw_next_piece(1);
 }
 
-int void_column = 0;
-
 /**
  * For two player (lan) mode, when a player has cleared more than one
  * line at once, adds the other penality lines.
@@ -701,7 +681,7 @@ void add_lines(int pending_lines) {
 
 	for (j = 18 - pending_lines; j < 18; j++)
 		for (i = 1; i < 11; i++)
-			board[j][i] = i != void_column ? '1' : ' ';
+			board[j][i] = i != game.void_col ? '1' : ' ';
 
 	refresh_board(0);
 }
@@ -883,18 +863,18 @@ void complete_line(int line) {
 	} else {
 		game.lines++;
 		if (game.lines % 10 == 0) {
-			int real_level = game.lines / 10;
+			int real_lvl = game.lines / 10;
 
-			game.level = real_level > game.level ? real_level : game.level;
-			print_number(17, 7, game.level);
+			game.lvl = real_lvl > game.lvl ? real_lvl : game.lvl;
+			print_number(17, 7, game.lvl);
 		}
 	}
 	print_number(17, 11, game.lines);
-	if (9 == game.lines) {/* quirk for erasing leading 1, when going under 10 */
+	if (9 == game.lines) {/* quirk for erasing leading 1, when < 10 */
 		put_cur(16, 11);
 		WRITE(' ');
 	}
-	game.period = INITIAL_PERIOD - 2 * game.level;
+	game.period = INITIAL_PERIOD - 2 * game.lvl;
 }
 
 /**
@@ -923,7 +903,7 @@ void check_lines() {
 	}
 
 	/* update score */
-	game.score += coef[total] * (game.level + 1);
+	game.score += coef[total] * (game.lvl + 1);
 	if ('b' != game.mode) {
 		print_number(17, 3, game.score);
 	}
@@ -957,19 +937,37 @@ void add_crumbles() {
 }
 
 /**
- * Prints a little help about command line invocation
+ * Prints the content of a file to standard output
+ * @param file Path of the file to dump
  */
-void usage() {
+void dump_file(const char *file) {
 	int fd = -1;
 	char buf[10];
 	ssize_t bytes_read;
 
-	fd = open("usage", O_RDONLY, 0);
-	if (-1 == fd)
-		WRITES("Can't find \"usage\" file\n");
+	fd = open(file, O_RDONLY, 0);
+	if (-1 == fd) {
+		WRITES("Can't find \"");
+		WRITES(file);
+		WRITES("\" file\n");
+	}
 	else
 		while (0 < (bytes_read = read(fd, buf, 10)))
 			write(1, buf, (size_t)bytes_read);
+}
+
+/**
+ * Prints a little help about command line invocation
+ */
+void usage() {
+	dump_file("usage");
+}
+
+/**
+ * Prints the keys used in the game
+ */
+void help() {
+	dump_file("keys");
 }
 
 /**
@@ -1025,7 +1023,7 @@ int main(int argc, char *argv[]) {
 		case 'a':
 		case 'b':
 			if (argc >= 3)
-				game.level = argv[2][0] - '0';
+				game.lvl = argv[2][0] - '0';
 			if (argc >= 4)
 				game.high = argv[3][0] - '0';
 			if (game.high > 5 || game.high < 0)
@@ -1035,7 +1033,7 @@ int main(int argc, char *argv[]) {
 			break;
 
 		case '2':
-			void_column = 1 + (my_random(0) % 10);
+			game.void_col = 1 + (my_random(0) % 10);
 			if (argc < 3) {
 				usage();
 				return 1;
@@ -1128,7 +1126,7 @@ int main(int argc, char *argv[]) {
 					goto out;
 			}
 			if (argc >= 4) {
-				game.level = argv[3][0] - '0';
+				game.lvl = argv[3][0] - '0';
 				if (argc >= 5)
 					game.high = argv[4][0] - '0';
 				if (game.high > 5 || game.high < 0)
@@ -1138,6 +1136,8 @@ int main(int argc, char *argv[]) {
 			}
 			break;
 
+		case 'h':
+			help();
 		default:
 			usage();
 			return 0;
@@ -1157,10 +1157,10 @@ int main(int argc, char *argv[]) {
 	}
 
 	/* check args */
-	if (game.level > 9 || game.level < 0)
-		game.level = 0;
+	if (game.lvl > 9 || game.lvl < 0)
+		game.lvl = 0;
 
-	game.period = INITIAL_PERIOD - 2 * game.level;
+	game.period = INITIAL_PERIOD - 2 * game.lvl;
 
 	fd_flags = fcntl(0, F_GETFL);
 	if (-1 == fd_flags)
@@ -1169,7 +1169,6 @@ int main(int argc, char *argv[]) {
 	if (-1 == ret)
 		goto out;
 
-	WRITES(civis);
 	WRITES(clear);
 	print_board();
 	current.next_piece = my_random(0) % 7;
@@ -1225,17 +1224,25 @@ int main(int argc, char *argv[]) {
 			/* select */
 			break;
 
+		case 'p':
 		case '\r':
 			/* start */
 			send_msg(MSG_PAUSE, 0);
 			in_pause();
 			break;
 
-		case 'q':
+		case 0x1b: /* ESC */
 			/* quit */
 			loop = 0;
 			if (net.mode)
 				send_msg(MSG_QUIT, 0);
+			break;
+
+		default:
+#if 0			/* debug */
+			if (key)
+				print_number(25, 25, key);
+#endif
 			break;
 		}
 
@@ -1278,15 +1285,18 @@ int main(int argc, char *argv[]) {
 			read_msg(&pending_lines, &loop, &msg);
 	}
 
+	/* display the result */
 	if (!can_move())
 		print_msg("LOOSER !!!", 4, 1);
 	else if ('b' == game.mode ||
-			('2' == game.mode && MSG_LOST == MSG_CODE(msg)))
+			(net.mode && MSG_LOST == MSG_CODE(msg)))
 		print_msg(" YOU WON !", 4, 2);
-	else if ('2' == game.mode && MSG_QUIT == MSG_CODE(msg))
+	else if (net.mode && MSG_QUIT == MSG_CODE(msg))
 		print_msg("PEER LEFT ", 4, 3);
-	if ('q' != key) /* TODO this test doesn"t work because key == '\0'*/
-		usleep(2000000);
+	else
+		print_msg("BYE BYE !!", 4, 3);
+
+	usleep(2000000);
 
 	/* flush non processed characters */
 	while (1 == read(0, &key, 1));
@@ -1300,7 +1310,7 @@ int main(int argc, char *argv[]) {
 
 	cleanup();
 	put_cur(0, 0);
-	if ('2' == game.mode) {
+	if (net.mode) {
 		if (-1 != net.sfd)
 			close(net.sfd);
 		close(net.fd);
