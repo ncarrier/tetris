@@ -463,6 +463,9 @@ inline void put_cur(int x, int y) {
 	WRITE(0x48);
 }
 
+/**
+ * Cleanups the terminal state, re-displays the cursor, restores the color.
+ */
 void cleanup() {
 	WRITES(cnorm);
 	WRITE('\n');
@@ -470,6 +473,10 @@ void cleanup() {
 	WRITES(clear);
 }	
 
+/**
+ * Writes a whitespace of a given background color
+ * @param color Color to put at the current position
+ */
 void put_color(int color) {
 	char block[] = "\033[22;30m\033[22;40m \033[m\x0f";
 	char black[] = "\033[m\x0f ";
@@ -483,6 +490,9 @@ void put_color(int color) {
 	WRITES(seq);
 }
 
+/**
+ * Hides the next piece indicator
+ */
 void hide_next() {
 	int x = 0;
 	int y = 0;
@@ -518,6 +528,13 @@ void refresh_board(int hide) {
 	}
 }
 
+/**
+ * Writes a number at a givent position, starting from it's right
+ * @param x Abscissa where the number will be written to, starting from the
+ * right
+ * @param y Ordinate where the number will be written to
+ * @param number Number to write
+ */
 void print_number(int x, int y, int number) {
 	if (0 == number) {
 		put_cur(x, y);
@@ -531,6 +548,9 @@ void print_number(int x, int y, int number) {
 	}
 }
 
+/**
+ * Writes all the board, except the playground
+ */
 void print_board() {
 	int x = 0;
 	int y = 0;
@@ -584,6 +604,14 @@ int my_random(int seed) {
 	return prev & ((1 << 30) - 1);
 }
 
+/**
+ * Draws/erases a piece
+ * @param piece Piece to draw
+ * @param ori Orientation of the piece
+ * @param x Abscissa where to place the piece
+ * @param y Ordinate where to place the piece
+ * @param draw if 0, erases the piece, otherwise, draws it
+ */
 void draw_piece(int piece, int ori, int x, int y, int draw) {
 	int i, j;
 
@@ -595,15 +623,26 @@ void draw_piece(int piece, int ori, int x, int y, int draw) {
 		       }
 }
 
+/**
+ * Draws / erase the current piece in the play ground
+ * @param draw 0 to erase, non-zero to draw it
+ */
 void draw_current_piece(int draw) {
 	draw_piece(current.piece, current.ori, 1 + current.x, current.y, draw);
 	put_cur(80, 80);
 }
 
+/**
+ * Draws / erase the next piece in the next piece indicator
+ * @param draw 0 to erase, non-zero to draw it
+ */
 void draw_next_piece(int draw) {
 	draw_piece(current.next_piece, 0, 14, 13, draw);
 }
 
+/**
+ * Adds the piece to the play ground, once it has hit
+ */
 void fix_piece() {
 	int i, j;
 
@@ -613,20 +652,25 @@ void fix_piece() {
 				board[current.next_y + j][1 + current.next_x + i] = (char)('1' + current.piece);
 }
 
+/**
+ * Check wether the piece at the next position, collides with fixed block or not
+ * @return 1 if the next position is possible, otherwise 0
+ */
 int can_move() {
 	int i, j;
 
-	for (i = 0; i < 4; i++) {
-		for (j = 0; j < 4; j++) {
+	for (i = 0; i < 4; i++)
+		for (j = 0; j < 4; j++)
 			if (' ' != (*((*(scale[current.piece]))[current.next_ori]))[j][i] &&
 				' ' != board[current.next_y + j][1 + current.next_x + i])
 				return 0;
-		}
-	}
-
 	return 1;
 }
 
+/**
+ * Effectively make the piece move, by setting the next position as the current
+ * one
+ */
 void move() {
 	draw_current_piece(0);
 	current.x =   current.next_x;
@@ -635,6 +679,9 @@ void move() {
 	draw_current_piece(1);
 }
 
+/**
+ * Cancels the move if it would collide fixed blocks
+ */
 void cancel_move() {
 	if (current.next_y != current.y) {
 		current.hit = 1;
@@ -645,6 +692,9 @@ void cancel_move() {
 	}
 }
 
+/**
+ * Performs a move if it is possible, othewise, cancel it
+ */
 void try_move() {
 	if (can_move())
 		move();
@@ -661,7 +711,7 @@ void down() {
 }
 
 /**
- * TODO unused but should be...
+ * Chooses the next piece and updates the next piece indicator
  */
 void get_next() {
 	draw_next_piece(0);
@@ -1016,20 +1066,104 @@ int read_port(char *port) {
 	return ret;
 }
 
-int main(int argc, char *argv[]) {
-	char key = 0;
-	int fd_flags;
-	int ret;
-	int loop = 1;
-	int frame = 0;
-	int freeze_down = 0;
-	char msg;
-	struct termios old_tios, new_tios;
-	int pending_lines = 0;
+/**
+ * Configures the server in a 2 player game
+ * @return -1 in case of error, otherwise 0
+ */
+int set_up_server() {
+	int ret = -1;
+	struct sockaddr_in sin;
+	struct sockaddr_in csin;
+	int yes = 1;
+	socklen_t len = sizeof(csin);
+	int flags = 0;
 
-	my_random(time(NULL));
+	WRITES("Server mode\n");
 
-	/* args processing */
+	net.sfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (-1 == net.sfd) {
+		WRITES("Can't create network socket\n");
+		return -1;
+	}
+	/* Configure to allow reuse */
+	ret = setsockopt(net.sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+	if (-1 == ret) {
+		WRITES("error : setsockopt\n");
+		return 1;
+	}
+	sin.sin_addr.s_addr = htonl(INADDR_ANY);
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons((uint16_t)net.port);
+	ret = bind(net.sfd, (struct sockaddr*)(&sin), sizeof(sin));
+	if (-1 == ret) {
+		WRITES("error : bind\n");
+		return -1;
+	}
+	ret = listen(net.sfd, 1);
+	if (-1 == ret) {
+		WRITES("error : listen\n");
+		return -1;
+	}
+	WRITES("Waiting for connection\n");
+	net.fd = accept(net.sfd, (struct sockaddr *)(&csin), &len);
+	if (-1 == net.fd) {
+		WRITES("error : accept\n");
+		return -1;
+	}
+	WRITES("A client has connected\n");
+
+	flags = fcntl(net.fd, F_GETFL);
+	if (-1 == flags)
+		return -1;
+	ret = fcntl(net.fd, F_SETFL, flags|O_NONBLOCK);
+	if (-1 == ret)
+		return -1;
+
+	return 0;
+}
+
+/**
+ * Configures the client in a 2 player game
+ * @return -1 in case of error, otherwise 0
+ */
+int set_up_client() {
+	int ret = -1;
+	struct sockaddr_in sin;
+	int flags = -1;
+
+	sin.sin_addr.s_addr = inet_addr(net.addr);
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons((uint16_t)net.port);
+
+	net.fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (-1 == net.fd) {
+		WRITES("error : socket\n");
+		return -1;
+	}
+	WRITES("Connection to ");
+	WRITES(net.addr);
+	ret = connect(net.fd, (struct sockaddr *)(&sin), sizeof(sin));
+	if (-1 == ret) {
+		WRITES("error : connect\n");
+		return -1;
+	}
+	WRITES("Connected to the server\n");
+	flags = fcntl(net.fd, F_GETFL);
+	if (-1 == flags)
+		return -1;
+	ret = fcntl(net.fd, F_SETFL, flags|O_NONBLOCK);
+	if (-1 == ret)
+		return -1;
+
+	return 0;
+}
+
+/**
+ * Processes command-line arguments
+ * @param argc Number of arguments
+ * @param argv Array of the command-line arguments
+ */
+void process_args(int argc, char *argv[]) {
 	if (argc != 1) {
 		game.mode = argv[1][0];
 		switch (game.mode) {
@@ -1046,62 +1180,15 @@ int main(int argc, char *argv[]) {
 			break;
 
 		case '2':
-			game.void_col = 1 + (my_random(0) % 10);
 			if (argc < 3) {
 				usage();
-				return 1;
+				_exit(1);
 			}
 			if (':' == argv[2][0]) {
-				struct sockaddr_in sin;
-				struct sockaddr_in csin;
-
-				WRITES("Server mode\n");
 				net.mode = NET_SERVER;
 				net.port = read_port(argv[2] + 1);
-
-				net.sfd = socket(AF_INET, SOCK_STREAM, 0);
-				if (-1 == net.sfd) {
-					WRITES("Can't create network socket\n");
-					return 1;
-				}
-				/* Configure to allow reuse */
-				int yes = 1;
-				ret = setsockopt(net.sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
-				if (-1 == ret) {
-					WRITES("error : setsockopt\n");
-					return 1;
-				}
-				sin.sin_addr.s_addr = htonl(INADDR_ANY);
-				sin.sin_family = AF_INET;
-				sin.sin_port = htons((uint16_t)net.port);
-				ret = bind(net.sfd, (struct sockaddr*)(&sin), sizeof(sin));
-				if (-1 == ret) {
-					WRITES("error : bind\n");
-					return 1;
-				}
-				ret = listen(net.sfd, 1);
-				if (-1 == ret) {
-					WRITES("error : listen\n");
-					return 1;
-				}
-				socklen_t len = sizeof(csin);
-				WRITES("Waiting for connection\n");
-				net.fd = accept(net.sfd, (struct sockaddr *)(&csin), &len);
-				if (-1 == net.fd) {
-					WRITES("error : accept\n");
-					return 1;
-				}
-				WRITES("A client has connected\n");
-				/* TODO rename stdin_flags */
-				fd_flags = fcntl(net.fd, F_GETFL);
-				if (-1 == fd_flags)
-					goto out;
-				ret = fcntl(net.fd, F_SETFL, fd_flags|O_NONBLOCK);
-				if (-1 == ret)
-					goto out;
 			} else {
 				char *p = NULL;
-				struct sockaddr_in sin;
 
 				WRITES("Client mode\n");
 				net.mode = NET_CLIENT;
@@ -1109,34 +1196,10 @@ int main(int argc, char *argv[]) {
 				for (; ':' != *p && '\0' != *p; p++);
 				if (*p != ':') {
 					usage();
-					return 1;
+					_exit(1);
 				}
 				*p = '\0';
 				net.port = read_port(p + 1);
-
-				sin.sin_addr.s_addr = inet_addr(net.addr);
-				sin.sin_family = AF_INET;
-				sin.sin_port = htons((uint16_t)net.port);
-
-				net.fd = socket(AF_INET, SOCK_STREAM, 0);
-				if (-1 == net.fd) {
-					WRITES("error : socket\n");
-					return 1;
-				}
-				WRITES("Connection to ");
-				WRITES(net.addr);
-				ret = connect(net.fd, (struct sockaddr *)(&sin), sizeof(sin));
-				if (-1 == ret) {
-					WRITES("error : connect\n");
-					return 1;
-				}
-				WRITES("Connected to the server\n");
-				fd_flags = fcntl(net.fd, F_GETFL);
-				if (-1 == fd_flags)
-					goto out;
-				ret = fcntl(net.fd, F_SETFL, fd_flags|O_NONBLOCK);
-				if (-1 == ret)
-					goto out;
 			}
 			if (argc >= 4) {
 				game.lvl = argv[3][0] - '0';
@@ -1147,15 +1210,51 @@ int main(int argc, char *argv[]) {
 				game.lines = 25;
 				add_crumbles(game.high);
 			}
+			game.void_col = 1 + (my_random(0) % 10);
 			break;
 
 		case 'h':
 			help();
 		default:
 			usage();
-			return 0;
+			_exit(0);
+			break;
 		}
 	}
+}
+
+/**
+ * Configures the network for a 2 player game
+ * @return 0 in case of success, otherwise 0
+ */
+int config_network() {
+	int ret;
+
+	if (net.mode == NET_SERVER)
+		ret = set_up_server();
+	else if (net.mode == NET_CLIENT)
+		ret = set_up_client();
+
+	return ret;
+}
+
+int main(int argc, char *argv[]) {
+	char key = 0;
+	int fd_flags;
+	int ret;
+	int loop = 1;
+	int frame = 0;
+	int freeze_down = 0;
+	char msg;
+	struct termios old_tios, new_tios;
+	int pending_lines = 0;
+
+	my_random(time(NULL));
+
+	/* args processing */
+	process_args(argc, argv);
+
+	config_network();
 	
 	ret = tcgetattr(0, &old_tios);
 	if (-1 == ret) {
