@@ -9,6 +9,10 @@
 
 #include <errno.h>
 
+#ifndef NULL
+#define NULL ((void*)0)
+#endif
+
 /* grid dimension : 10x18 */
 /**
  * \def WIDTH
@@ -177,6 +181,8 @@ struct {
 	int lines;  /**< Number of lines achieved so far */
 	int score;  /**< Current score of the player */
 	int period; /**< Number of loop passes between two automatic drops */
+	int pause;  /**< If true, the game is suspended */
+	int height; /**< Current height of the game, for network mode only */
 } game = {
 		.mode =   'a',
 		.high =   0,
@@ -184,6 +190,8 @@ struct {
 		.lines =  0,
 		.score =  0,
 		.period = INITIAL_PERIOD,
+		.pause = 0,
+		.height = 0,
 };
 
 /**
@@ -454,11 +462,7 @@ inline void put_cur(int x, int y) {
 }
 
 void cleanup() {
-	int stdin_flags;
-
 	WRITES(cnorm);
-	stdin_flags = fcntl(0, F_GETFL);
-	fcntl(0, F_SETFL, stdin_flags&(~O_NONBLOCK));
 	WRITE('\n');
 	WRITES(sgr0);
 	WRITES(clear);
@@ -489,6 +493,10 @@ void hide_next() {
 	}
 }
 
+/**
+ * Re-draws or hides all the board.
+ * @param hide If true, the board content is masked, otherwise it is refreshed
+ */
 void refresh_board(int hide) {
 	int x = 0;
 	int y = 0;
@@ -646,6 +654,9 @@ void down() {
 	try_move();
 }
 
+/**
+ * TODO unused but should be...
+ */
 void help() {
 	char keys[] = "q\tQuit\n\
 d\tTurn clockwise\n\
@@ -696,6 +707,23 @@ void add_lines(int pending_lines) {
 }
 
 /**
+ * In 2 player mode, updates the gauge showing the height of the other player
+ * @param value Height reached by the other player
+ */
+void update_gauge(int value) {
+	int j;
+
+	for (j = 0; j < value; j++) {
+		put_cur(18, j);
+		put_color(7);
+	}
+	for (; j < 18; j++) {
+		put_cur(18, j);
+		put_color(3);
+	}
+}
+
+/**
  * Sends a 2 player network message to the remote peer
  * @param code Code of the tetris message to send
  * @param value Value associated, used only by MSG_LINES and
@@ -712,26 +740,131 @@ int send_msg(int code, int value) {
 	return -1;
 }
 
-int max_height = 0;
+/**
+ * Hides the board and prints a message of 10 char max, with given for and
+ * background colors
+ * @param msg Message of 10 chars max
+ * @param fore Foreground color
+ * @param back Background color
+ */
+void print_msg(char *msg, int fore, int back) {
+	char f = (char)(MAX(0, MIN(7, fore)) + '0');
+	char b = (char)(MAX(0, MIN(7, back)) + '0');
 
+	refresh_board(1);
+	put_cur(1, 5);
+	WRITES("\033[30;3");
+	WRITE(f);
+	WRITES("m\033[22;4");
+	WRITE(b);
+	WRITES("m          ");
+
+	put_cur(1, 6);
+	WRITES(msg);
+
+	put_cur(1, 7);
+	WRITES("          \033[m\x0f");
+}
+
+/**
+ * Suspends/restarts the game, and prints a pause message
+ */
+void in_pause() {
+	game.pause = !game.pause;
+	if (game.pause) {
+		print_msg("* pause! *", 5, 3);
+		hide_next();
+	} else {
+		refresh_board(0);
+		draw_current_piece(1);
+		draw_next_piece(1);
+	}
+}
+
+/**
+ * Checks if the remote sent a message and acts accordingly
+ * @param pending_lines Number of penalty lines, updated in output if the remote
+ * did multiples lines
+ * @param loop in output, set to 0 if a message which stops the game has been
+ * received, i.e. QUIT or LOST
+ * @return -1 in case of error, otherwise 0
+ */
+int read_msg(int *pending_lines, int *loop, char *msg) {
+	int ret = -1;
+
+	ret = read(net.fd, msg, 1);
+	switch (ret) {
+		case -1:
+			if (errno != EAGAIN) {
+				WRITES("error : read");
+				return -1;
+			}
+			break;
+
+		case 1:
+			switch (MSG_CODE(*msg)) {
+				case MSG_HEIGHT:
+					put_cur(25, 25);
+					update_gauge(MSG_VALUE(*msg));
+					break;
+
+				case MSG_LINES:
+					*pending_lines += MSG_VALUE(*msg);
+					break;
+
+				case MSG_LOST:
+					*loop = 0;
+					break;
+
+				case MSG_QUIT:
+					*loop = 0;
+					break;
+
+				case MSG_PAUSE:
+					in_pause();
+					break;
+
+				default:
+					WRITES("error : Unknown message\n");
+					return -1;
+					break;
+			}
+			break;
+
+		default:
+			break;
+	}
+
+	return 0;
+}
+
+/**
+ * Computes the current game's height and sends it to the remote
+ */
 void update_height() {
 	int i, j;
-	int old_height = max_height;
+	int old_height = game.height;
 
-	max_height = 0;
+	game.height = 0;
 
 	for (j = 17; j >= 0; j--)
 		for (i = 1; i < 11; i++)
 			if (' ' != board[j][i])
-				max_height = j;
+				game.height = j;
 
-	if (max_height != old_height)
-		send_msg(MSG_HEIGHT, max_height);
+	if (game.height != old_height)
+		send_msg(MSG_HEIGHT, game.height);
 }
 
+/**
+ * Deletes a given line which is known to have been completed. Updates and
+ * prints the lines counter and the level and updates the game speed accordingly
+ * @param line Index of the line to clear from top to bottom starting by 0
+ */
 void complete_line(int line) {
 	int i;
 
+	/* clear the line */
 	while (line--)
 		for (i = 1; i < 11; i++) {
 			board[line + 1][i] = board[line][i];
@@ -741,6 +874,8 @@ void complete_line(int line) {
 			else
 				put_color(board[line + 1][i] - '0');
 		}
+
+	/* update lines, level and period (game speed) */
 	if (game.mode == 'b') {
 		game.lines--;
 		if (0 > game.lines)
@@ -754,7 +889,6 @@ void complete_line(int line) {
 			print_number(17, 7, game.level);
 		}
 	}
-
 	print_number(17, 11, game.lines);
 	if (9 == game.lines) {/* quirk for erasing leading 1, when going under 10 */
 		put_cur(16, 11);
@@ -763,7 +897,11 @@ void complete_line(int line) {
 	game.period = INITIAL_PERIOD - 2 * game.level;
 }
 
-
+/**
+ * Check if one or more lines have been completed. If there are some, cleans
+ * them, updates the score and send a message to the rmote in case of multiple
+ * lines.
+ */
 void check_lines() {
 	int i, j;
 	int line_complete = 1;
@@ -794,49 +932,28 @@ void check_lines() {
 		send_msg(MSG_LINES, total - 1);
 }
 
-void add_crumbles() {
-	int i, j;
-	char lut[20] = {'1', '2', '3', '4', '5', '6', '7',
-		' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
-		' ', ' ', ' ', ' ', ' '};
-	int limit = 17 - 2 * game.high;
-
-	for (j = 17; j > limit; j--)
-		for (i = 1; i < 11; i++)
-			board[j][i] = lut[my_random(0) % 20];
-}
-
-int suspend = 0;
-
-void in_pause() {
-	suspend = !suspend;
-	if (suspend) {
-		refresh_board(1);
-		hide_next();
-		put_cur(1, 6);
-		WRITES("\033[22;35m\033[22;43m* pause! *\033[m\x0f");
-	} else {
-		refresh_board(0);
-		draw_current_piece(1);
-		draw_next_piece(1);
-	}
+/**
+ * Crappy but funny implementation of strlen
+ * @param s String we want the length of
+ * @return Length of the string
+ */
+size_t strlen(const char *s) {
+	return '\0' == *s ? 0 : 1 + strlen(s + 1);
 }
 
 /**
- * In 2 player mode, updates the gauge showing the height of the other player
- * @param value Height reached by the other player
+ * Adds random blocks to the grid, up to game's high factor, with a probability
+ * of 7/20.
  */
-void update_gauge(int value) {
-	int j;
+void add_crumbles() {
+	int i, j;
+	char lut[] = "1234567             ";
+	int limit = 17 - 2 * game.high;
+	int mod = (int)strlen(lut);
 
-	for (j = 0; j < value; j++) {
-		put_cur(18, j);
-		put_color(7);
-	}
-	for (; j < 18; j++) {
-		put_cur(18, j);
-		put_color(3);
-	}
+	for (j = 17; j > limit; j--)
+		for (i = 1; i < 11; i++)
+			board[j][i] = lut[my_random(0) % mod];
 }
 
 /**
@@ -888,28 +1005,9 @@ int read_port(char *port) {
 	return ret;
 }
 
-void print_msg(char *msg, int fore, int back) {
-	char f = (char)(MAX(0, MIN(7, fore)) + '0');
-	char b = (char)(MAX(0, MIN(7, back)) + '0');
-
-	refresh_board(1);
-	put_cur(1, 5);
-	WRITES("\033[30;3");
-	WRITE(f);
-	WRITES("m\033[22;4");
-	WRITE(b);
-	WRITES("m          ");
-
-	put_cur(1, 6);
-	WRITES(msg);
-
-	put_cur(1, 7);
-	WRITES("          \033[m\x0f");
-}
-
 int main(int argc, char *argv[]) {
 	char key = 0;
-	int stdin_flags;
+	int fd_flags;
 	int ret;
 	int loop = 1;
 	int frame = 0;
@@ -952,14 +1050,14 @@ int main(int argc, char *argv[]) {
 
 				net.sfd = socket(AF_INET, SOCK_STREAM, 0);
 				if (-1 == net.sfd) {
-					WRITES("Can't create network socket");
+					WRITES("Can't create network socket\n");
 					return 1;
 				}
 				/* Configure to allow reuse */
 				int yes = 1;
 				ret = setsockopt(net.sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 				if (-1 == ret) {
-					WRITES("error : setsockopt");
+					WRITES("error : setsockopt\n");
 					return 1;
 				}
 				sin.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -967,27 +1065,27 @@ int main(int argc, char *argv[]) {
 				sin.sin_port = htons((uint16_t)net.port);
 				ret = bind(net.sfd, (struct sockaddr*)(&sin), sizeof(sin));
 				if (-1 == ret) {
-					WRITES("error : bind");
+					WRITES("error : bind\n");
 					return 1;
 				}
 				ret = listen(net.sfd, 1);
 				if (-1 == ret) {
-					WRITES("error : listen");
+					WRITES("error : listen\n");
 					return 1;
 				}
 				socklen_t len = sizeof(csin);
 				WRITES("Waiting for connection\n");
 				net.fd = accept(net.sfd, (struct sockaddr *)(&csin), &len);
 				if (-1 == net.fd) {
-					WRITES("error : accept");
+					WRITES("error : accept\n");
 					return 1;
 				}
 				WRITES("A client has connected\n");
 				/* TODO rename stdin_flags */
-				stdin_flags = fcntl(net.fd, F_GETFL);
-				if (-1 == stdin_flags)
+				fd_flags = fcntl(net.fd, F_GETFL);
+				if (-1 == fd_flags)
 					goto out;
-				ret = fcntl(net.fd, F_SETFL, stdin_flags|O_NONBLOCK);
+				ret = fcntl(net.fd, F_SETFL, fd_flags|O_NONBLOCK);
 				if (-1 == ret)
 					goto out;
 			} else {
@@ -1011,21 +1109,21 @@ int main(int argc, char *argv[]) {
 
 				net.fd = socket(AF_INET, SOCK_STREAM, 0);
 				if (-1 == net.fd) {
-					WRITES("error : socket");
+					WRITES("error : socket\n");
 					return 1;
 				}
 				WRITES("Connection to ");
 				WRITES(net.addr);
 				ret = connect(net.fd, (struct sockaddr *)(&sin), sizeof(sin));
 				if (-1 == ret) {
-					WRITES("error : connect");
+					WRITES("error : connect\n");
 					return 1;
 				}
 				WRITES("Connected to the server\n");
-				stdin_flags = fcntl(net.fd, F_GETFL);
-				if (-1 == stdin_flags)
+				fd_flags = fcntl(net.fd, F_GETFL);
+				if (-1 == fd_flags)
 					goto out;
-				ret = fcntl(net.fd, F_SETFL, stdin_flags|O_NONBLOCK);
+				ret = fcntl(net.fd, F_SETFL, fd_flags|O_NONBLOCK);
 				if (-1 == ret)
 					goto out;
 			}
@@ -1064,10 +1162,10 @@ int main(int argc, char *argv[]) {
 
 	game.period = INITIAL_PERIOD - 2 * game.level;
 
-	stdin_flags = fcntl(0, F_GETFL);
-	if (-1 == stdin_flags)
+	fd_flags = fcntl(0, F_GETFL);
+	if (-1 == fd_flags)
 		goto out;
-	ret = fcntl(0, F_SETFL, stdin_flags|O_NONBLOCK);
+	ret = fcntl(0, F_SETFL, fd_flags|O_NONBLOCK);
 	if (-1 == ret)
 		goto out;
 
@@ -1168,7 +1266,7 @@ int main(int argc, char *argv[]) {
 		}
 		if (freeze_down)
 			freeze_down--;
-		if (!suspend)
+		if (!game.pause)
 			frame++;
 		key = 0;
 		if (0 >= game.lines && 'b' == game.mode) {
@@ -1176,66 +1274,24 @@ int main(int argc, char *argv[]) {
 			loop = 0;
 		}
 
-		if (net.mode) {
-			/* TODO check lan messages */
-			ret = read(net.fd, &msg, 1);
-			switch (ret) {
-				case -1:
-					/* TODO error */
-					if (errno != EAGAIN)
-						WRITES("error : write");
-					break;
-
-				case 1:
-					switch (MSG_CODE(msg)) {
-						case MSG_HEIGHT:
-							put_cur(25, 25);
-							update_gauge(MSG_VALUE(msg));
-							break;
-
-						case MSG_LINES:
-							pending_lines += MSG_VALUE(msg);
-							break;
-
-						case MSG_LOST:
-							loop = 0;
-							break;
-
-						case MSG_QUIT:
-							loop = 0;
-							break;
-
-						case MSG_PAUSE:
-							in_pause();
-							break;
-
-						default:
-							WRITES("error : Unknown message\n");
-							break;
-					}
-					break;
-
-				default:
-					break;
-			}
-		}
+		if (net.mode)
+			read_msg(&pending_lines, &loop, &msg);
 	}
 
-	if (!can_move()) {
+	if (!can_move())
 		print_msg("LOOSER !!!", 4, 1);
-		usleep(2000000);
-	} else if ('b' == game.mode ||
-			('2' == game.mode && MSG_LOST == MSG_CODE(msg))) {
+	else if ('b' == game.mode ||
+			('2' == game.mode && MSG_LOST == MSG_CODE(msg)))
 		print_msg(" YOU WON !", 4, 2);
-		usleep(2000000);
-	} else if ('2' == game.mode && MSG_QUIT == MSG_CODE(msg)) {
+	else if ('2' == game.mode && MSG_QUIT == MSG_CODE(msg))
 		print_msg("PEER LEFT ", 4, 3);
+	if ('q' != key) /* TODO this test doesn"t work because key == '\0'*/
 		usleep(2000000);
-	}
 
 	/* flush non processed characters */
 	while (1 == read(0, &key, 1));
 
+	/* restore terminal */
 	ret = tcsetattr(0, TCSANOW, &old_tios);
 	if (-1 == ret) {
 		WRITES("error : tcsetattr");
