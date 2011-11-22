@@ -234,9 +234,9 @@ typedef char image[4][4];
 #define PIXEL_LIT(im, x, y) (' ' != (*(im))[(y)][(x)])
 
 // Retourne un pointeur sur l'image
-#define GET_PIX_IMG(scl, piece, ori) ((*((scl)[(piece)]))[(ori)])
+#define GET_IMG(scl, piece, ori) ((*((scl)[(piece)]))[(ori)])
 
-#define IMG_IS_VALID(im) ((im) != NULL)
+#define VALID_IMG(im) ((im) != NULL)
 
 /**
  * \var A0
@@ -633,7 +633,7 @@ void draw_piece(int piece, int ori, int x, int y, int draw) {
 
 	for (i = 0; i < 4; i++)
 	       for (j = 0; j < 4; j++)
-		       if (PIXEL_LIT(GET_PIX_IMG(scale, piece, ori), i, j)) {
+		       if (PIXEL_LIT(GET_IMG(scale, piece, ori), i, j)) {
 				put_cur(x + i, y + j);
 				put_color(draw ? piece + 1 : 0);
 		       }
@@ -664,7 +664,7 @@ void fix_piece() {
 
 	for (i = 0; i < 4; i++)
 		for (j = 0; j < 4; j++)
-			if (PIXEL_LIT(GET_PIX_IMG(scale, current.piece, current.ori), i, j))
+			if (PIXEL_LIT(GET_IMG(scale, current.piece, current.ori), i, j))
 				board[current.next_y + j][1 + current.next_x + i] = (char)('1' + current.piece);
 }
 
@@ -677,7 +677,7 @@ int can_move() {
 
 	for (i = 0; i < 4; i++)
 		for (j = 0; j < 4; j++)
-			if (PIXEL_LIT(GET_PIX_IMG(scale, current.piece, current.next_ori), i, j) &&
+			if (PIXEL_LIT(GET_IMG(scale, current.piece, current.next_ori), i, j) &&
 					' ' != board[current.next_y + j][1 + current.next_x + i])
 				return 0;
 
@@ -711,20 +711,26 @@ void cancel_move() {
 
 /**
  * Performs a move if it is possible, othewise, cancel it
+ * @return 1 if the move is valid, 0 otherwise
  */
-void try_move() {
-	if (can_move())
+int try_move() {
+	int moved = can_move();
+
+	if (moved)
 		move();
 	else
 		cancel_move();
+
+	return moved;
 }
 
 /**
  * Makes the current piece try to go down of one step
+ * @return 1 if the move is valid, 0 otherwise
  */
-void down() {
+int down() {
 	current.next_y++;
-	try_move();
+	return try_move();
 }
 
 /**
@@ -959,7 +965,7 @@ void complete_line(int line) {
 
 /**
  * Check if one or more lines have been completed. If there are some, cleans
- * them, updates the score and send a message to the rmote in case of multiple
+ * them, updates the score and send a message to the remote in case of multiple
  * lines.
  */
 void check_lines() {
@@ -1176,6 +1182,27 @@ int set_up_client() {
 }
 
 /**
+ * Process level and high arguments. Uses only the first digit
+ * @param argc Number of remaining arguments
+ * @param argv Array of the remaining arguments, contains normally only level
+ * and optionnally high
+ */
+void process_lvl_high_args(int argc, char *argv[]) {
+	game.lvl = argv[0][0] - '0';
+	if (argc > 1)
+		game.high = argv[1][0] - '0';
+
+	/* check args */
+	if (game.high > 5 || game.high < 0)
+		game.high = 0;
+
+	if (game.lvl > 9 || game.lvl < 0)
+		game.lvl = 0;
+
+	game.period = INITIAL_PERIOD - 2 * game.lvl;
+}
+
+/**
  * Processes command-line arguments
  * @param argc Number of arguments
  * @param argv Array of the command-line arguments
@@ -1187,13 +1214,8 @@ void process_args(int argc, char *argv[]) {
 		case 'a':
 		case 'b':
 			if (argc >= 3)
-				game.lvl = argv[2][0] - '0';
-			if (argc >= 4)
-				game.high = argv[3][0] - '0';
-			if (game.high > 5 || game.high < 0)
-				game.high = 0;
+				process_lvl_high_args(argc - 2, argv + 2);
 			game.lines = 25;
-			add_crumbles(game.high);
 			break;
 
 		case '2':
@@ -1218,15 +1240,8 @@ void process_args(int argc, char *argv[]) {
 				*p = '\0';
 				net.port = read_port(p + 1);
 			}
-			if (argc >= 4) {
-				game.lvl = argv[3][0] - '0';
-				if (argc >= 5)
-					game.high = argv[4][0] - '0';
-				if (game.high > 5 || game.high < 0)
-					game.high = 0;
-				game.lines = 25;
-				add_crumbles(game.high);
-			}
+			if (argc >= 4)
+				process_lvl_high_args(argc - 3, argv + 3);
 			game.void_col = 1 + (my_random(0) % 10);
 			break;
 
@@ -1238,6 +1253,8 @@ void process_args(int argc, char *argv[]) {
 			break;
 		}
 	}
+
+	add_crumbles(game.high);
 }
 
 /**
@@ -1255,6 +1272,10 @@ int config_network() {
 	return ret;
 }
 
+/**
+ * Fixes a piece which has it, gets the next piece, checks the lines
+ * see if the player has lost, adds penalty lines
+ */
 void piece_hit() {
 	fix_piece();
 	get_next();
@@ -1273,134 +1294,204 @@ void piece_hit() {
 	if (net.mode)
 		update_height();
 
-	usleep(100000);
 	game.freeze = 10;
 }
 
-int main(int argc, char *argv[]) {
-	char key = 0;
+struct termios old_tios;
+
+/**
+ * Configures input/and output
+ * @return 1 in case of error, 0 otherwise
+ */
+int config_io(void) {
 	int fd_flags;
 	int ret;
-	int frame = 0;
-	char msg;
-	struct termios old_tios, new_tios;
+	struct termios new_tios;
 
-	my_random(time(NULL));
-
-	/* args processing */
-	process_args(argc, argv);
-
-	config_network();
-	
 	ret = tcgetattr(0, &old_tios);
 	if (-1 == ret) {
 		WRITES("error : tcgetattr");
-		return 1;
+		return -1;
 	}
 	cfmakeraw(&new_tios);
 	ret = tcsetattr(0, TCSANOW, &new_tios);
 	if (-1 == ret) {
 		WRITES("error : tcsetattr");
-		return 1;
+		return -1;
 	}
-
-	/* check args */
-	if (game.lvl > 9 || game.lvl < 0)
-		game.lvl = 0;
-
-	game.period = INITIAL_PERIOD - 2 * game.lvl;
 
 	fd_flags = fcntl(0, F_GETFL);
 	if (-1 == fd_flags)
-		goto out;
+		return -1;
 	ret = fcntl(0, F_SETFL, fd_flags|O_NONBLOCK);
 	if (-1 == ret)
-		goto out;
+		return -1;
 
 	WRITES(civis);
 	WRITES(clear);
 	print_board();
+
+	return 0;
+}
+
+/**
+ * Restores the state of the terminal
+ */
+void restore_io() {
+	char key;
+
+	/* flush non processed characters */
+	while (1 == read(0, &key, 1));
+
+	/* restore terminal */
+	tcsetattr(0, TCSANOW, &old_tios);
+
+	put_cur(0, 0);
+	cleanup();
+}
+
+/**
+ * Performs actions on keystrokes.
+ * @param key Key pressed this frame
+ * @return 1 if a move has been performed
+ */
+int check_keys(int key) {
+	int moved_down = 0;
+
+	switch (key) {
+	case 'j':
+		/* left */
+		current.next_x--;
+		try_move();
+		break;
+
+	case 'k':
+		/* down */
+		if (!game.freeze)
+			moved_down = down();
+		break;
+
+	case 'l':
+		current.next_x++;
+		try_move();
+		break;
+
+	case 'f':
+	case 'i':
+		/* A */
+		current.next_ori++;
+		if (!VALID_IMG(GET_IMG(scale, current.piece, current.next_ori)))
+			current.next_ori = 0;
+		try_move();
+		break;
+
+	case 'd':
+	case 'u':
+		/* B */
+		current.next_ori--;
+		if (current.next_ori < 0)
+			current.next_ori = 4;
+		while (!VALID_IMG(GET_IMG(scale, current.piece, current.next_ori)))
+			current.next_ori--;
+		try_move();
+		break;
+
+	case ' ':
+		/* select */
+		break;
+
+	case 'p':
+	case '\r':
+		/* start */
+		send_msg(MSG_PAUSE, 0);
+		in_pause();
+		break;
+
+	case 0x1b: /* ESC */
+		/* quit */
+		game.loop = 0;
+		if (net.mode)
+			send_msg(MSG_QUIT, 0);
+		break;
+
+	default:
+#if 0			/* debug */
+		if (key)
+			print_number(25, 25, key);
+#endif
+		break;
+	}
+
+	return moved_down;
+}
+
+
+/**
+ * Frees network related resources
+ */
+void close_net()  {
+	if (-1 != net.sfd)
+		close(net.sfd);
+	close(net.fd);
+}
+
+/**
+ * Displays the result of the game
+ * @param msg Last network message received
+ */
+void display_result(char msg) {
+	if (!can_move())
+		print_msg("LOOSER !!!", 4, 1);
+	else if ('b' == game.mode ||
+			(net.mode && MSG_LOST == MSG_CODE(msg)))
+		print_msg(" YOU WON !", 4, 2);
+	else if (net.mode && MSG_QUIT == MSG_CODE(msg))
+		print_msg("PEER LEFT ", 4, 3);
+	else
+		print_msg("BYE BYE !!", 4, 3);
+
+	usleep(2000000);
+}
+
+int main(int argc, char *argv[]) {
+	char key = 0;
+	int ret;
+	int frame = 0;
+	char msg;
+	int moved_down = 0;
+
+	/* init pseudo-random generator */
+	my_random(time(NULL));
+
+	process_args(argc, argv);
+
+	ret = config_network();
+	if (-1 == ret)
+		goto out;
+
+	ret = config_io();
+	if (-1 == ret)
+		goto out;
+
 	current.next_piece = my_random(0) % 7;
 	get_next();
-	
 	draw_current_piece(1);
 
 	while (game.loop) {
-		/* TODO manage errors in read... or not... */
-		if (read(0, &key, 1));
-		
 		usleep(20000);
-		switch (key) {
-		case 'j':
-			/* left */
-			current.next_x--;
-			try_move();
-			break;
+		if (read(0, &key, 1));
 
-		case 'k':
-			/* down */
-			if (!game.freeze)
-				down();
+		if (key)
+			moved_down = check_keys(key);
+		if (frame >= game.period)
+			moved_down |= down();
+		if (moved_down)
 			frame = 0;
-			break;
-
-		case 'l':
-			current.next_x++;
-			try_move();
-			break;
-
-		case 'f':
-		case 'i':
-			/* A */
-			current.next_ori++;
-			if (!IMG_IS_VALID(GET_PIX_IMG(scale, current.piece, current.next_ori)))
-				current.next_ori = 0;
-			try_move();
-			break;
-
-		case 'd':
-		case 'u':
-			/* B */
-			current.next_ori--;
-			if (current.next_ori < 0)
-				current.next_ori = 4;
-			while (!IMG_IS_VALID(GET_PIX_IMG(scale, current.piece, current.next_ori)))
-				current.next_ori--;
-			try_move();
-			break;
-
-		case ' ':
-			/* select */
-			break;
-
-		case 'p':
-		case '\r':
-			/* start */
-			send_msg(MSG_PAUSE, 0);
-			in_pause();
-			break;
-
-		case 0x1b: /* ESC */
-			/* quit */
-			game.loop = 0;
-			if (net.mode)
-				send_msg(MSG_QUIT, 0);
-			break;
-
-		default:
-#if 0			/* debug */
-			if (key)
-				print_number(25, 25, key);
-#endif
-			break;
-		}
+		moved_down = 0;
 
 		if (current.hit)
 			piece_hit();
-		if (frame >= game.period) {
-			frame = 0;
-			down();
-		}
+
 		if (game.freeze)
 			game.freeze--;
 		if (!game.pause)
@@ -1415,36 +1506,12 @@ int main(int argc, char *argv[]) {
 			read_msg(&net.pending_lines, &game.loop, &msg);
 	}
 
-	/* display the result */
-	if (!can_move())
-		print_msg("LOOSER !!!", 4, 1);
-	else if ('b' == game.mode ||
-			(net.mode && MSG_LOST == MSG_CODE(msg)))
-		print_msg(" YOU WON !", 4, 2);
-	else if (net.mode && MSG_QUIT == MSG_CODE(msg))
-		print_msg("PEER LEFT ", 4, 3);
-	else
-		print_msg("BYE BYE !!", 4, 3);
+	display_result(msg);
 
-	usleep(2000000);
+	if (net.mode)
+		close_net();
 
-	/* flush non processed characters */
-	while (1 == read(0, &key, 1));
-
-	/* restore terminal */
-	ret = tcsetattr(0, TCSANOW, &old_tios);
-	if (-1 == ret) {
-		WRITES("error : tcsetattr");
-		return 1;
-	}
-
-	cleanup();
-	put_cur(0, 0);
-	if (net.mode) {
-		if (-1 != net.sfd)
-			close(net.sfd);
-		close(net.fd);
-	}
+	restore_io();
 
 	return 0;
 out:

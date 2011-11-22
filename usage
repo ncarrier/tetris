@@ -1,7 +1,7 @@
 Usage :
-	tetris a [level]
+	tetris a [level [high]]
 		Classic "survival" mode
-	tetris b [level] [high]
+	tetris b [level [high]]
 		25 line to complete, with a handicap
 	tetris 2 :[port] [level [high]]
 		Launches the server for a 2 player mode listening on the port port
@@ -12,7 +12,7 @@ Usage :
 
 	level has an influence on the speed of piece dropping and must be in [0,9]
 	high must be in [0,5] and a non zero value adds random blocks at the bottom of the grid
-
+	/!\ Only the first digit of level and high are read
 
 	Default values are :
 		level : 0
