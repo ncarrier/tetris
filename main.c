@@ -185,6 +185,8 @@ struct {
 	int pause;    /**< If true, the game is suspended */
 	int height;   /**< Current height of the game, for network mode only */
 	int void_col; /**< Index of the void column for penalties */
+	int loop;     /**< Non-zero while in main loop */
+	int freeze;   /**< Number of frame when a down can't occur (key delay) */
 } game = {
 		.mode =     'a',
 		.high =     0,
@@ -195,6 +197,8 @@ struct {
 		.pause =    0,
 		.height =   0,
 		.void_col = 0,
+		.loop =     1,
+		.freeze =   0,
 };
 
 /**
@@ -208,12 +212,14 @@ struct {
 	int port;   /**< Port number of the connection */
 	int sfd;    /**< Socket of the server, only used by the server */
 	int fd;     /**< socket of the remote host */
+	int pending_lines; /**< Number of lines to send to the remote */
 } net = {
 		.mode = NET_NONE,
 		.addr = "localhost",
 		.port = NET_DEFAULT_PORT,
 		.sfd = -1,
 		.fd = -1,
+		.pending_lines = 0,
 };
 
 /**
@@ -224,7 +230,13 @@ struct {
  */
 typedef char image[4][4];
 
-#define GET_PIXEL(im, x, y) (((1 << (x)) + 4 * (y)) & im)
+//#define PIXEL_LIT(im, x, y) (((1 << (x)) + 4 * (y)) & im)
+#define PIXEL_LIT(im, x, y) (' ' != (*(im))[(y)][(x)])
+
+// Retourne un pointeur sur l'image
+#define GET_PIX_IMG(scl, piece, ori) ((*((scl)[(piece)]))[(ori)])
+
+#define IMG_IS_VALID(im) ((im) != NULL)
 
 /**
  * \var A0
@@ -621,7 +633,7 @@ void draw_piece(int piece, int ori, int x, int y, int draw) {
 
 	for (i = 0; i < 4; i++)
 	       for (j = 0; j < 4; j++)
-		       if (' ' != (*((*(scale[piece]))[ori]))[j][i]) {
+		       if (PIXEL_LIT(GET_PIX_IMG(scale, piece, ori), i, j)) {
 				put_cur(x + i, y + j);
 				put_color(draw ? piece + 1 : 0);
 		       }
@@ -652,7 +664,7 @@ void fix_piece() {
 
 	for (i = 0; i < 4; i++)
 		for (j = 0; j < 4; j++)
-			if (' ' != (*((*(scale[current.piece]))[current.next_ori]))[j][i])
+			if (PIXEL_LIT(GET_PIX_IMG(scale, current.piece, current.ori), i, j))
 				board[current.next_y + j][1 + current.next_x + i] = (char)('1' + current.piece);
 }
 
@@ -665,9 +677,10 @@ int can_move() {
 
 	for (i = 0; i < 4; i++)
 		for (j = 0; j < 4; j++)
-			if (' ' != (*((*(scale[current.piece]))[current.next_ori]))[j][i] &&
-				' ' != board[current.next_y + j][1 + current.next_x + i])
+			if (PIXEL_LIT(GET_PIX_IMG(scale, current.piece, current.next_ori), i, j) &&
+					' ' != board[current.next_y + j][1 + current.next_x + i])
 				return 0;
+
 	return 1;
 }
 
@@ -1242,16 +1255,35 @@ int config_network() {
 	return ret;
 }
 
+void piece_hit() {
+	fix_piece();
+	get_next();
+	current.hit = 0;
+	check_lines();
+	draw_current_piece(1);
+	if (!can_move()) {
+		game.loop = 0;
+		send_msg(MSG_LOST, 0);
+	}
+	if (net.pending_lines) {
+		add_lines(net.pending_lines);
+		net.pending_lines = 0;
+	}
+
+	if (net.mode)
+		update_height();
+
+	usleep(100000);
+	game.freeze = 10;
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int fd_flags;
 	int ret;
-	int loop = 1;
 	int frame = 0;
-	int freeze_down = 0;
 	char msg;
 	struct termios old_tios, new_tios;
-	int pending_lines = 0;
 
 	my_random(time(NULL));
 
@@ -1293,7 +1325,7 @@ int main(int argc, char *argv[]) {
 	
 	draw_current_piece(1);
 
-	while (loop) {
+	while (game.loop) {
 		/* TODO manage errors in read... or not... */
 		if (read(0, &key, 1));
 		
@@ -1307,7 +1339,7 @@ int main(int argc, char *argv[]) {
 
 		case 'k':
 			/* down */
-			if (!freeze_down)
+			if (!game.freeze)
 				down();
 			frame = 0;
 			break;
@@ -1321,7 +1353,7 @@ int main(int argc, char *argv[]) {
 		case 'i':
 			/* A */
 			current.next_ori++;
-			if (NULL == (*(scale[current.piece]))[current.next_ori])
+			if (!IMG_IS_VALID(GET_PIX_IMG(scale, current.piece, current.next_ori)))
 				current.next_ori = 0;
 			try_move();
 			break;
@@ -1332,7 +1364,7 @@ int main(int argc, char *argv[]) {
 			current.next_ori--;
 			if (current.next_ori < 0)
 				current.next_ori = 4;
-			while (NULL == (*(scale[current.piece]))[current.next_ori])
+			while (!IMG_IS_VALID(GET_PIX_IMG(scale, current.piece, current.next_ori)))
 				current.next_ori--;
 			try_move();
 			break;
@@ -1350,7 +1382,7 @@ int main(int argc, char *argv[]) {
 
 		case 0x1b: /* ESC */
 			/* quit */
-			loop = 0;
+			game.loop = 0;
 			if (net.mode)
 				send_msg(MSG_QUIT, 0);
 			break;
@@ -1363,43 +1395,24 @@ int main(int argc, char *argv[]) {
 			break;
 		}
 
-		if (current.hit) {
-			fix_piece();
-			get_next();
-			current.hit = 0;
-			check_lines();
-			draw_current_piece(1);
-			if (!can_move()) {
-				loop = 0;
-				send_msg(MSG_LOST, 0);
-			}
-			if (pending_lines) {
-				add_lines(pending_lines);
-				pending_lines = 0;
-			}
-
-			if (net.mode)
-				update_height();
-
-			usleep(100000);
-			freeze_down = 10;
-		}
+		if (current.hit)
+			piece_hit();
 		if (frame >= game.period) {
 			frame = 0;
 			down();
 		}
-		if (freeze_down)
-			freeze_down--;
+		if (game.freeze)
+			game.freeze--;
 		if (!game.pause)
 			frame++;
 		key = 0;
 		if (0 >= game.lines && 'b' == game.mode) {
 			usleep(2000000);
-			loop = 0;
+			game.loop = 0;
 		}
 
 		if (net.mode)
-			read_msg(&pending_lines, &loop, &msg);
+			read_msg(&net.pending_lines, &game.loop, &msg);
 	}
 
 	/* display the result */
