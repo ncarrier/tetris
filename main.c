@@ -1,8 +1,10 @@
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/soundcard.h>
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -187,6 +189,9 @@ struct {
 	int void_col; /**< Index of the void column for penalties */
 	int loop;     /**< Non-zero while in main loop */
 	int freeze;   /**< Number of frame when a down can't occur (key delay) */
+	int music;    /**< Non zero if music is enabled */
+	int dsp;      /**< File descriptor of sound card */
+	int bgm;      /**< File descriptor of background music */
 } game = {
 		.mode =     'a',
 		.high =     0,
@@ -199,6 +204,9 @@ struct {
 		.void_col = 0,
 		.loop =     1,
 		.freeze =   0,
+		.music =    0,
+		.dsp =      -1,
+		.bgm =      -1,
 };
 
 /**
@@ -1453,12 +1461,46 @@ void display_result(char msg) {
 	usleep(2000000);
 }
 
+#define BUF_SIZE 2048
+
+int config_music() {
+	int ret = -1;
+	game.dsp = open("/dev/dsp", O_RDWR);
+	game.bgm = open("sound/bgm.raw", O_RDONLY);
+	int rate = 44100;
+	int channels = 2;
+
+	if (-1 == game.dsp) {
+		WRITES("error : open dsp");
+		return 0;
+	}
+	if (-1 == game.bgm) {
+		WRITES("error : open bgm");
+		return 0;
+	}
+	/* set samplerate */
+	ret = ioctl(game.dsp, SNDCTL_DSP_SPEED, &rate);
+	if (-1 == ret) {
+		WRITES("error : ioctl samplerate");
+		return 0;
+	}
+	/* set stereo */
+	ret = ioctl(game.dsp, SNDCTL_DSP_CHANNELS, &channels);
+	if (-1 == ret) {
+		WRITES("error : ioctl stereo");
+		return 0;
+	}
+	
+	return 1;
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int ret;
 	int frame = 0;
 	char msg;
 	int moved_down = 0;
+	char buf[BUF_SIZE];
 
 	/* init pseudo-random generator */
 	my_random(time(NULL));
@@ -1468,6 +1510,14 @@ int main(int argc, char *argv[]) {
 	ret = config_network();
 	if (-1 == ret)
 		goto out;
+
+	game.music = config_music();
+	if (game.music)
+		WRITES("Music enabled\n");
+	else
+		WRITES("Music disabled\n");
+
+	usleep(2000000);
 
 	ret = config_io();
 	if (-1 == ret)
@@ -1480,6 +1530,25 @@ int main(int argc, char *argv[]) {
 	while (game.loop) {
 		usleep(20000);
 		if (read(0, &key, 1));
+		if (game.music) {
+			ret = read(game.bgm, buf, BUF_SIZE);
+			if (-1 == ret && errno == EAGAIN)
+				goto music;
+			if (-1 == ret)
+				WRITES("error : read\n");
+			if (ret <= 0) {
+				lseek(game.bgm, 0, SEEK_SET);
+				ret = read(game.bgm, buf, BUF_SIZE);
+				if (-1 == ret)
+					WRITES("error : read\n");
+			}
+			if (ret > 0) {
+				ret = write(game.dsp, buf, (size_t)ret);
+				if (-1 == ret)
+					WRITES("error : read2\n");
+			}
+		}
+music:
 
 		if (key)
 			moved_down = check_keys(key);
