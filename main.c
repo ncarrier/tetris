@@ -47,6 +47,18 @@
  */
 #define INITIAL_PERIOD 50
 
+/**
+ * \def BUF_SIZE
+ * \brief Size of the audio buffers
+ */
+#define BUF_SIZE 2048
+
+/**
+ * \def SFX
+ * \brief Directory which contains sfx raw 8 bits unsigned audio sfx
+ */
+#define SFX "sound/sfx/"
+
 /* Network modes */
 /**
  * \def NET_NONE
@@ -138,7 +150,9 @@ static const char civis[] = {0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 0};
  * \var cnorm
  * \brief Console escape sequence to make the cursor visible
  */
-static const char cnorm[] = {0x1b, 0x5b, 0x33, 0x34, 0x68, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68, 0};
+static const char cnorm[] = {
+	0x1b, 0x5b, 0x33, 0x34, 0x68, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68, 0
+};
 
 /**
  * \var sgr0
@@ -192,6 +206,7 @@ struct {
 	int music;    /**< Non zero if music is enabled */
 	int dsp;      /**< File descriptor of sound card */
 	int bgm;      /**< File descriptor of background music */
+	int sfx;      /**< Sfx currently playing, -1 if none */
 } game = {
 		.mode =     'a',
 		.high =     0,
@@ -207,6 +222,7 @@ struct {
 		.music =    0,
 		.dsp =      -1,
 		.bgm =      -1,
+		.sfx =      -1,
 };
 
 /**
@@ -461,6 +477,45 @@ struct {
 	if (write(1, s, _i)); \
 } while(0)
 
+enum sfx {
+        SFX_DROP,       /**<  */
+        SFX_GRID_DROP,  /**<  */
+        SFX_LINE,       /**<  */
+        SFX_LOST,       /**<  */
+        SFX_MOVE,       /**<  */
+        SFX_PAUSE,      /**<  */
+        SFX_ROTATION,   /**<  */
+        SFX_TETRIS,     /**<  */
+        SFX_WIN,        /**<  */
+
+	SFX_NB,		/**<  */
+};
+
+static struct {
+	const char *path;
+	int fd;
+} sfx_file[] = {
+        {SFX"Drop.raw",         -1},
+        {SFX"Grid_drop.raw",    -1},
+        {SFX"Line.raw",         -1},
+        {SFX"Lost.raw",         -1},
+        {SFX"Move.raw",         -1},
+        {SFX"Pause.raw",        -1},
+        {SFX"Rotation.raw",     -1},
+        {SFX"Tetris.raw",       -1},
+        {SFX"Win.raw",  	-1},
+};
+
+/**
+ * Sets an sfx wating for playing, resetting any non fully played previous sfx
+ */
+void play_sfx(enum sfx fx) {
+	if (-1 != game.sfx)
+		lseek(game.sfx, 0, SEEK_SET);
+
+	game.sfx = sfx_file[fx].fd;
+}
+
 /**
  * Place the cursor at a given position
  * @param x Abscissa in [0,99]
@@ -697,6 +752,13 @@ int can_move() {
  * one
  */
 void move() {
+	if (game.music) {
+		if (current.ori != current.next_ori)
+			play_sfx(SFX_ROTATION);
+		else
+			play_sfx(SFX_MOVE);
+	}
+
 	draw_current_piece(0);
 	current.x =   current.next_x;
 	current.y =   current.next_y;
@@ -1365,6 +1427,7 @@ void restore_io() {
  */
 int check_keys(int key) {
 	int moved_down = 0;
+	char buf;
 
 	switch (key) {
 	case 'j':
@@ -1417,6 +1480,8 @@ int check_keys(int key) {
 
 	case 0x1b: /* ESC */
 		/* quit */
+		if (read(0, &buf, 1) == 1)
+			break;
 		game.loop = 0;
 		if (net.mode)
 			send_msg(MSG_QUIT, 0);
@@ -1461,46 +1526,85 @@ void display_result(char msg) {
 	usleep(2000000);
 }
 
-#define BUF_SIZE 2048
-
 int config_music() {
 	int ret = -1;
-	game.dsp = open("/dev/dsp", O_RDWR);
-	game.bgm = open("sound/bgm.raw", O_RDONLY);
 	int rate = 44100;
 	int channels = 2;
+	int i;
 
+	game.dsp = open("/dev/dsp", O_RDWR);
+	game.bgm = open("sound/bgm.raw", O_RDONLY);
 	if (-1 == game.dsp) {
-		WRITES("error : open dsp");
+		WRITES("error : open dsp\n");
 		return 0;
 	}
 	if (-1 == game.bgm) {
-		WRITES("error : open bgm");
+		WRITES("error : open bgm\n");
 		return 0;
 	}
 	/* set samplerate */
 	ret = ioctl(game.dsp, SNDCTL_DSP_SPEED, &rate);
 	if (-1 == ret) {
-		WRITES("error : ioctl samplerate");
+		WRITES("error : ioctl samplerate\n");
 		return 0;
 	}
 	/* set stereo */
 	ret = ioctl(game.dsp, SNDCTL_DSP_CHANNELS, &channels);
 	if (-1 == ret) {
-		WRITES("error : ioctl stereo");
+		WRITES("error : ioctl stereo\n");
 		return 0;
+	}
+
+	for (i = 0; i < SFX_NB; i++) {
+		sfx_file[i].fd = open(sfx_file[i].path, O_RDONLY);
+		if (sfx_file[i].fd == -1) {
+			WRITES("error : opening ");
+			WRITES(sfx_file[i].path);
+			WRITE('\n');
+		}
 	}
 	
 	return 1;
 }
 
+/**
+ * Loads the bgm and sfx chunks, mix them together and send the to the sound
+ * card
+ */
+void update_music() {
+	int ret = -1;
+	char buf_sfx[BUF_SIZE];
+
+	/* read bgm */
+	ret = read(game.bgm, buf_sfx, BUF_SIZE);
+	if (-1 == ret && errno == EAGAIN)
+		return;
+	if (-1 == ret)
+		WRITES("error : read\n");
+	if (ret <= 0) {
+		lseek(game.bgm, 0, SEEK_SET);
+		ret = read(game.bgm, buf_sfx, BUF_SIZE);
+		if (-1 == ret)
+			WRITES("error : read\n");
+	}
+	if (ret > 0) {
+		/* read sfx */
+
+		/* mix */
+
+		/* play the result */
+		ret = write(game.dsp, buf_sfx, (size_t)ret);
+		if (-1 == ret)
+			WRITES("error : read2\n");
+	}
+}
+ 
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int ret;
 	int frame = 0;
 	char msg;
 	int moved_down = 0;
-	char buf[BUF_SIZE];
 
 	/* init pseudo-random generator */
 	my_random(time(NULL));
@@ -1530,28 +1634,10 @@ int main(int argc, char *argv[]) {
 	while (game.loop) {
 		usleep(20000);
 		if (read(0, &key, 1));
-		if (game.music) {
-			ret = read(game.bgm, buf, BUF_SIZE);
-			if (-1 == ret && errno == EAGAIN)
-				goto music;
-			if (-1 == ret)
-				WRITES("error : read\n");
-			if (ret <= 0) {
-				lseek(game.bgm, 0, SEEK_SET);
-				ret = read(game.bgm, buf, BUF_SIZE);
-				if (-1 == ret)
-					WRITES("error : read\n");
-			}
-			if (ret > 0) {
-				ret = write(game.dsp, buf, (size_t)ret);
-				if (-1 == ret)
-					WRITES("error : read2\n");
-			}
-		}
-music:
-
 		if (key)
 			moved_down = check_keys(key);
+		if (game.music)
+			update_music();
 		if (frame >= game.period)
 			moved_down |= down();
 		if (moved_down)
