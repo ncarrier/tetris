@@ -908,6 +908,7 @@ void print_msg(char *msg, int fore, int back) {
 void in_pause() {
 	game.pause = !game.pause;
 	if (game.pause) {
+		play_sfx(SFX_PAUSE);
 		print_msg("* pause! *", 5, 3);
 		hide_next();
 	} else {
@@ -1056,6 +1057,14 @@ void check_lines() {
 			total++;
 		}
 		line_complete = 1;
+	}
+
+	/* play the right sfx */
+	if (total != 0) {
+		if (4 == total)
+			play_sfx(SFX_TETRIS);
+		else
+			play_sfx(SFX_LINE);
 	}
 
 	/* update score */
@@ -1365,6 +1374,7 @@ void piece_hit() {
 		update_height();
 
 	game.freeze = 10;
+	play_sfx(SFX_DROP);
 }
 
 struct termios old_tios;
@@ -1572,29 +1582,44 @@ int config_music() {
  * card
  */
 void update_music() {
-	int ret = -1;
-	char buf_sfx[BUF_SIZE];
+	int ret_bgm = -1;
+	int ret_sfx = -1;
+	unsigned char buf_bgm[BUF_SIZE] = {0};
+	unsigned char buf_sfx[BUF_SIZE];
 
 	/* read bgm */
-	ret = read(game.bgm, buf_sfx, BUF_SIZE);
-	if (-1 == ret && errno == EAGAIN)
+	if (game.pause)
+		ret_bgm = BUF_SIZE;
+	else
+		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
+	if (-1 == ret_bgm && errno == EAGAIN)
 		return;
-	if (-1 == ret)
+	if (-1 == ret_bgm)
 		WRITES("error : read\n");
-	if (ret <= 0) {
+	if (ret_bgm <= 0) {
 		lseek(game.bgm, 0, SEEK_SET);
-		ret = read(game.bgm, buf_sfx, BUF_SIZE);
-		if (-1 == ret)
+		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
+		if (-1 == ret_bgm)
 			WRITES("error : read\n");
 	}
-	if (ret > 0) {
-		/* read sfx */
+	if (ret_bgm > 0) {
+		int i = 0;
+		for (i = 0; i < ret_bgm; i++)
+			buf_bgm[i] = (unsigned char)((255 + buf_bgm[i]) >> 1);
 
-		/* mix */
+		if (-1 != game.sfx) {
+			/* read sfx */
+			ret_sfx = read(game.sfx, buf_sfx, (size_t)MIN(ret_bgm, BUF_SIZE));
+			if (-1 != ret_sfx)
+				for (i = 0; i < ret_sfx; i++)
+					buf_bgm[i] = (unsigned char)(buf_bgm[i] + ((255 + buf_sfx[i]) >> 1));
+
+			/* mix */
+		}
 
 		/* play the result */
-		ret = write(game.dsp, buf_sfx, (size_t)ret);
-		if (-1 == ret)
+		ret_bgm = write(game.dsp, buf_bgm, (size_t)ret_bgm);
+		if (-1 == ret_bgm)
 			WRITES("error : read2\n");
 	}
 }
