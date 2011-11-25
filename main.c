@@ -755,7 +755,7 @@ void move() {
 	if (game.music) {
 		if (current.ori != current.next_ori)
 			play_sfx(SFX_ROTATION);
-		else
+		else if (current.x != current.next_x)
 			play_sfx(SFX_MOVE);
 	}
 
@@ -1294,6 +1294,7 @@ void process_args(int argc, char *argv[]) {
 		case 'b':
 			if (argc >= 3)
 				process_lvl_high_args(argc - 2, argv + 2);
+			// game.lines = 2;
 			game.lines = 25;
 			break;
 
@@ -1356,6 +1357,7 @@ int config_network() {
  * see if the player has lost, adds penalty lines
  */
 void piece_hit() {
+	play_sfx(SFX_DROP);
 	fix_piece();
 	get_next();
 	current.hit = 0;
@@ -1364,6 +1366,7 @@ void piece_hit() {
 	if (!can_move()) {
 		game.loop = 0;
 		send_msg(MSG_LOST, 0);
+		play_sfx(SFX_LOST);
 	}
 	if (net.pending_lines) {
 		add_lines(net.pending_lines);
@@ -1374,7 +1377,6 @@ void piece_hit() {
 		update_height();
 
 	game.freeze = 10;
-	//play_sfx(SFX_DROP);
 }
 
 struct termios old_tios;
@@ -1439,70 +1441,71 @@ int check_keys(int key) {
 	int moved_down = 0;
 	char buf;
 
-	switch (key) {
-	case 'j':
-		/* left */
-		current.next_x--;
-		try_move();
-		break;
-
-	case 'k':
-		/* down */
-		if (!game.freeze)
-			moved_down = down();
-		break;
-
-	case 'l':
-		current.next_x++;
-		try_move();
-		break;
-
-	case 'f':
-	case 'i':
-		/* A */
-		current.next_ori++;
-		if (!VALID_IMG(GET_IMG(scale, current.piece, current.next_ori)))
-			current.next_ori = 0;
-		try_move();
-		break;
-
-	case 'd':
-	case 'u':
-		/* B */
-		current.next_ori--;
-		if (current.next_ori < 0)
-			current.next_ori = 4;
-		while (!VALID_IMG(GET_IMG(scale, current.piece, current.next_ori)))
-			current.next_ori--;
-		try_move();
-		break;
-
-	case ' ':
-		/* select */
-		break;
-
-	case 'p':
-	case '\r':
+	if ('p' == key || '\r' == key) {
 		/* start */
 		send_msg(MSG_PAUSE, 0);
 		in_pause();
-		break;
-
-	case 0x1b: /* ESC */
-		/* quit */
-		if (read(0, &buf, 1) == 1)
+	} else if (!game.pause) {
+		switch (key) {
+		case 'j':
+			/* left */
+			current.next_x--;
+			try_move();
 			break;
-		game.loop = 0;
-		if (net.mode)
-			send_msg(MSG_QUIT, 0);
-		break;
 
-	default:
+		case 'k':
+			/* down */
+			if (!game.freeze)
+				moved_down = down();
+			break;
+
+		case 'l':
+			current.next_x++;
+			try_move();
+			break;
+
+		case 'f':
+		case 'i':
+			/* A */
+			current.next_ori++;
+			if (!VALID_IMG(GET_IMG(scale, current.piece,
+						       	current.next_ori)))
+				current.next_ori = 0;
+			try_move();
+			break;
+
+		case 'd':
+		case 'u':
+			/* B */
+			current.next_ori--;
+			if (current.next_ori < 0)
+				current.next_ori = 4;
+			while (!VALID_IMG(GET_IMG(scale, current.piece,
+						       	current.next_ori)))
+				current.next_ori--;
+			try_move();
+			break;
+
+		case ' ':
+			/* select */
+			break;
+
+		case 0x1b: /* ESC */
+			/* quit */
+			if (read(0, &buf, 1) == 1)
+				break;
+			game.loop = 0;
+			if (net.mode)
+				send_msg(MSG_QUIT, 0);
+			break;
+
+		default:
 #if 0			/* debug */
-		if (key)
-			print_number(25, 25, key);
+			if (key)
+				print_number(25, 25, key);
 #endif
-		break;
+			break;
+		}
 	}
 
 	return moved_down;
@@ -1589,12 +1592,11 @@ void update_music() {
 	int i = 0;
 
 	/* read bgm */
-	if (1 || game.pause) {
+	if (0 || game.pause || !game.loop) {
 		ret_bgm = BUF_SIZE;
 		for  (i = 0; i < BUF_SIZE; i++)
 			buf_bgm[i] = 128;
-	}
-	else
+	} else
 		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
 	if (-1 == ret_bgm && errno == EAGAIN)
 		return;
@@ -1660,34 +1662,37 @@ int main(int argc, char *argv[]) {
 	get_next();
 	draw_current_piece(1);
 
-	while (game.loop) {
+	while (game.loop || -1 != game.sfx) {
 		usleep(20000);
-		if (read(0, &key, 1));
-		if (key) /* TODO handle read errors */
-			moved_down = check_keys(key);
+
+		if (game.loop) {
+			if (read(0, &key, 1));
+			if (key) /* TODO handle read errors */
+				moved_down = check_keys(key);
+			if (frame >= game.period)
+				moved_down |= down();
+			if (moved_down)
+				frame = 0;
+			moved_down = 0;
+
+			if (current.hit)
+				piece_hit();
+
+			if (game.freeze)
+				game.freeze--;
+			if (!game.pause)
+				frame++;
+			key = 0;
+			if (0 >= game.lines && 'b' == game.mode) {
+				play_sfx(SFX_WIN);
+				game.loop = 0;
+			}
+
+			if (net.mode)
+				read_msg(&net.pending_lines, &game.loop, &msg);
+		}
 		if (game.music)
 			update_music();
-		if (frame >= game.period)
-			moved_down |= down();
-		if (moved_down)
-			frame = 0;
-		moved_down = 0;
-
-		if (current.hit)
-			piece_hit();
-
-		if (game.freeze)
-			game.freeze--;
-		if (!game.pause)
-			frame++;
-		key = 0;
-		if (0 >= game.lines && 'b' == game.mode) {
-			usleep(2000000);
-			game.loop = 0;
-		}
-
-		if (net.mode)
-			read_msg(&net.pending_lines, &game.loop, &msg);
 	}
 
 	display_result(msg);
