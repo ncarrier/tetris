@@ -1374,7 +1374,7 @@ void piece_hit() {
 		update_height();
 
 	game.freeze = 10;
-	play_sfx(SFX_DROP);
+	//play_sfx(SFX_DROP);
 }
 
 struct termios old_tios;
@@ -1586,10 +1586,14 @@ void update_music() {
 	int ret_sfx = -1;
 	unsigned char buf_bgm[BUF_SIZE] = {0};
 	unsigned char buf_sfx[BUF_SIZE];
+	int i = 0;
 
 	/* read bgm */
-	if (game.pause)
+	if (1 || game.pause) {
 		ret_bgm = BUF_SIZE;
+		for  (i = 0; i < BUF_SIZE; i++)
+			buf_bgm[i] = 128;
+	}
 	else
 		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
 	if (-1 == ret_bgm && errno == EAGAIN)
@@ -1603,18 +1607,18 @@ void update_music() {
 			WRITES("error : read\n");
 	}
 	if (ret_bgm > 0) {
-		int i = 0;
-		for (i = 0; i < ret_bgm; i++)
-			buf_bgm[i] = (unsigned char)((255 + buf_bgm[i]) >> 1);
-
+		/* read sfx and mix it with the bgm chunk */
 		if (-1 != game.sfx) {
-			/* read sfx */
-			ret_sfx = read(game.sfx, buf_sfx, (size_t)MIN(ret_bgm, BUF_SIZE));
-			if (-1 != ret_sfx)
-				for (i = 0; i < ret_sfx; i++)
-					buf_bgm[i] = (unsigned char)(buf_bgm[i] + ((255 + buf_sfx[i]) >> 1));
+			size_t sfx_chunk_len = (size_t)MIN(ret_bgm, BUF_SIZE);
 
-			/* mix */
+			ret_sfx = read(game.sfx, buf_sfx, sfx_chunk_len);
+			if (0 == ret_sfx) {
+				lseek(game.sfx, 0, SEEK_SET);
+				game.sfx = -1;
+			}
+			else if (-1 != game.sfx)
+				for (i = 0; i < ret_sfx; i++)
+					buf_bgm[i] = (unsigned char)(buf_bgm[i] + buf_sfx[i] - 128);
 		}
 
 		/* play the result */
@@ -1646,7 +1650,7 @@ int main(int argc, char *argv[]) {
 	else
 		WRITES("Music disabled\n");
 
-	usleep(2000000);
+	//usleep(2000000);
 
 	ret = config_io();
 	if (-1 == ret)
@@ -1659,7 +1663,7 @@ int main(int argc, char *argv[]) {
 	while (game.loop) {
 		usleep(20000);
 		if (read(0, &key, 1));
-		if (key)
+		if (key) /* TODO handle read errors */
 			moved_down = check_keys(key);
 		if (game.music)
 			update_music();
