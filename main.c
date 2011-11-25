@@ -188,6 +188,18 @@ static char board[19][20] = {
 };
 
 /**
+ * \enum end_status
+ * \brief status when the game ends
+ */
+enum end_status {
+	END_NONE,      /**< The game is still on going */
+	END_WON,       /**< The player won the game, in mode 2 or b */
+	END_LOST,      /**< The player has lost */
+	END_QUIT,      /**< The player has requested to quit the game */
+	END_PEER_LEFT, /**< The remote has quit in a 2 player game */
+};
+
+/**
  * \var game
  * \brief Main structure representing the game's current state
  */
@@ -207,6 +219,9 @@ struct {
 	int dsp;      /**< File descriptor of sound card */
 	int bgm;      /**< File descriptor of background music */
 	int sfx;      /**< Sfx currently playing, -1 if none */
+	int suspended;/**< Number of frame during when the game is suspended */
+	/** status when the game is finished */
+	enum end_status status;
 } game = {
 		.mode =     'a',
 		.high =     0,
@@ -223,6 +238,8 @@ struct {
 		.dsp =      -1,
 		.bgm =      -1,
 		.sfx =      -1,
+		.status =   END_NONE,
+		.suspended = 0,
 };
 
 /**
@@ -951,10 +968,13 @@ int read_msg(int *pending_lines, int *loop, char *msg) {
 
 				case MSG_LOST:
 					*loop = 0;
+					game.status = END_WON;
+					play_sfx(SFX_WIN);
 					break;
 
 				case MSG_QUIT:
 					*loop = 0;
+					game.status = END_PEER_LEFT;
 					break;
 
 				case MSG_PAUSE:
@@ -1065,6 +1085,7 @@ void check_lines() {
 			play_sfx(SFX_TETRIS);
 		else
 			play_sfx(SFX_LINE);
+		game.suspended = 50;
 	}
 
 	/* update score */
@@ -1244,6 +1265,7 @@ int set_up_client() {
 	}
 	WRITES("Connection to ");
 	WRITES(net.addr);
+	WRITE('\n');
 	ret = connect(net.fd, (struct sockaddr *)(&sin), sizeof(sin));
 	if (-1 == ret) {
 		WRITES("error : connect\n");
@@ -1365,6 +1387,7 @@ void piece_hit() {
 	draw_current_piece(1);
 	if (!can_move()) {
 		game.loop = 0;
+		game.status = END_LOST;
 		send_msg(MSG_LOST, 0);
 		play_sfx(SFX_LOST);
 	}
@@ -1494,6 +1517,7 @@ int check_keys(int key) {
 			/* quit */
 			if (read(0, &buf, 1) == 1)
 				break;
+			game.status = END_QUIT;
 			game.loop = 0;
 			if (net.mode)
 				send_msg(MSG_QUIT, 0);
@@ -1526,15 +1550,27 @@ void close_net()  {
  * @param msg Last network message received
  */
 void display_result(char msg) {
-	if (!can_move())
-		print_msg("LOOSER !!!", 4, 1);
-	else if ('b' == game.mode ||
-			(net.mode && MSG_LOST == MSG_CODE(msg)))
-		print_msg(" YOU WON !", 4, 2);
-	else if (net.mode && MSG_QUIT == MSG_CODE(msg))
-		print_msg("PEER LEFT ", 4, 3);
-	else
-		print_msg("BYE BYE !!", 4, 3);
+	switch (game.status) {
+		case END_WON:
+			print_msg(" YOU WON !", 4, 2);
+			break;
+
+		case END_LOST:
+			print_msg("LOOSER !!!", 4, 1);
+			break;
+
+		case END_PEER_LEFT:
+			print_msg("PEER LEFT ", 4, 3);
+			break;
+
+		case END_QUIT:
+			print_msg("BYE BYE !!", 4, 3);
+			break;
+
+		default:
+			/* can't happen */
+			break;
+	}
 
 	usleep(2000000);
 }
@@ -1665,7 +1701,7 @@ int main(int argc, char *argv[]) {
 	while (game.loop || -1 != game.sfx) {
 		usleep(20000);
 
-		if (game.loop) {
+		if (game.loop && END_NONE == game.status && !game.suspended) {
 			if (read(0, &key, 1));
 			if (key) /* TODO handle read errors */
 				moved_down = check_keys(key);
@@ -1686,11 +1722,14 @@ int main(int argc, char *argv[]) {
 			if (0 >= game.lines && 'b' == game.mode) {
 				play_sfx(SFX_WIN);
 				game.loop = 0;
+				game.status = END_WON;
 			}
 
 			if (net.mode)
 				read_msg(&net.pending_lines, &game.loop, &msg);
 		}
+		if (game.suspended)
+			game.suspended--;
 		if (game.music)
 			update_music();
 	}
