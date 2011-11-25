@@ -1665,13 +1665,27 @@ void update_music() {
 			WRITES("error : read2\n");
 	}
 }
- 
+#include <stdio.h> 
+void smooth_time(struct timeval tv, struct timeval old_tv) {
+	suseconds_t udiff;
+
+	if (tv.tv_usec < old_tv.tv_usec)
+		udiff = 1000000 + tv.tv_usec - old_tv.tv_usec;
+	else
+		udiff = tv.tv_usec - old_tv.tv_usec;
+
+	if (udiff < 23219)
+		usleep((useconds_t)(23219 - udiff));
+	fprintf(stderr, "slept for %dµs\n", udiff);
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int ret;
 	int frame = 0;
 	char msg;
 	int moved_down = 0;
+	struct timeval old_tv, tv;
 
 	/* init pseudo-random generator */
 	my_random(time(NULL));
@@ -1688,8 +1702,6 @@ int main(int argc, char *argv[]) {
 	else
 		WRITES("Music disabled\n");
 
-	//usleep(2000000);
-
 	ret = config_io();
 	if (-1 == ret)
 		goto out;
@@ -1698,8 +1710,11 @@ int main(int argc, char *argv[]) {
 	get_next();
 	draw_current_piece(1);
 
+	gettimeofday(&old_tv, NULL);
 	while (game.loop || -1 != game.sfx) {
-		usleep(20000);
+		gettimeofday(&tv, NULL);
+		smooth_time(tv, old_tv);
+		gettimeofday(&old_tv, NULL);
 
 		if (game.loop && END_NONE == game.status && !game.suspended) {
 			if (read(0, &key, 1));
