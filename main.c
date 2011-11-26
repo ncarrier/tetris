@@ -1091,7 +1091,7 @@ void check_lines() {
 			play_sfx(SFX_TETRIS);
 		else
 			play_sfx(SFX_LINE);
-		game.suspended = 50;
+		game.suspended = 60;
 	}
 
 	/* update score */
@@ -1754,6 +1754,10 @@ int main(int argc, char *argv[]) {
 			if (net.mode)
 				read_msg(&net.pending_lines, &game.loop, &msg);
 		}
+		/* flush acculated keypresses while suspended */
+		if (1 == game.suspended)
+			while (read(0, &key, 1) != -1);
+
 		if (game.suspended)
 			game.suspended--;
 		if (game.music)
