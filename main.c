@@ -86,7 +86,7 @@
 
 /**
  * \def NET_DEFAULT_PORT
- * \brief Default port used for two player mode TODO not used for now
+ * \brief Default port used for two player mode
  */
 #define NET_DEFAULT_PORT 37280
 
@@ -255,7 +255,7 @@ struct {
  */
 struct {
 	int mode;   /**< One of NET_NONE, NET_SERVER and NET_CLIENT */
-	char *addr; /**< TODO make the program accept any address Address of the server */
+	char *addr; /**< Dotted numerical address of the server */
 	int port;   /**< Port number of the connection */
 	int sfd;    /**< Socket of the server, only used by the server */
 	int fd;     /**< socket of the remote host */
@@ -1688,6 +1688,25 @@ void smooth_time(struct timeval tv, struct timeval old_tv) {
 		usleep((useconds_t)(INTER_FRAME - udiff));
 }
 
+/**
+ * Updates the animation when lost
+ */
+void update_lost(void) {
+	static int stage = 0;
+	int color;
+	int i;
+	int ordinate = 17 - (stage / 3);
+
+	if (0 == stage % 3 && ordinate >= 0) {
+		for (i = 1; i < 11; i++) {
+			color = my_random(0) % 7;
+			put_cur(i, ordinate);
+			put_color(color);
+		}
+	}
+	stage++;
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int ret;
@@ -1729,7 +1748,7 @@ int main(int argc, char *argv[]) {
 
 		if (game.loop && END_NONE == game.status && !game.suspended) {
 			if (read(0, &key, 1));
-			if (key) /* TODO handle read errors */
+			if (key)
 				moved_down = check_keys(key);
 			if (frame >= game.period)
 				moved_down |= down();
@@ -1753,6 +1772,7 @@ int main(int argc, char *argv[]) {
 
 			if (net.mode)
 				read_msg(&net.pending_lines, &game.loop, &msg);
+
 		}
 		/* flush acculated keypresses while suspended */
 		if (1 == game.suspended)
@@ -1762,6 +1782,8 @@ int main(int argc, char *argv[]) {
 			game.suspended--;
 		if (game.music)
 			update_music();
+		if (END_LOST == game.status)
+			update_lost();
 	}
 
 	display_result(msg);
