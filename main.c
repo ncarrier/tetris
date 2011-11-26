@@ -48,6 +48,12 @@
 #define INITIAL_PERIOD 50
 
 /**
+ * \def INTER_FRAME
+ * \brief Approximate inter-frame duration
+ */
+#define INTER_FRAME 23000
+
+/**
  * \def BUF_SIZE
  * \brief Size of the audio buffers
  */
@@ -1662,10 +1668,14 @@ void update_music() {
 		/* play the result */
 		ret_bgm = write(game.dsp, buf_bgm, (size_t)ret_bgm);
 		if (-1 == ret_bgm)
-			WRITES("error : read2\n");
+			WRITES("error : write\n");
 	}
 }
-#include <stdio.h> 
+
+/**
+ * Make the inter-frame duration nearly constant, by sleeping until it lasts
+ * INTER_FRAME
+ */
 void smooth_time(struct timeval tv, struct timeval old_tv) {
 	suseconds_t udiff;
 
@@ -1674,9 +1684,8 @@ void smooth_time(struct timeval tv, struct timeval old_tv) {
 	else
 		udiff = tv.tv_usec - old_tv.tv_usec;
 
-	if (udiff < 23219)
-		usleep((useconds_t)(23219 - udiff));
-	fprintf(stderr, "slept for %dµs\n", udiff);
+	if (udiff < INTER_FRAME)
+		usleep((useconds_t)(INTER_FRAME - udiff));
 }
 
 int main(int argc, char *argv[]) {
@@ -1709,6 +1718,8 @@ int main(int argc, char *argv[]) {
 	current.next_piece = my_random(0) % 7;
 	get_next();
 	draw_current_piece(1);
+
+	usleep(1000000);
 
 	gettimeofday(&old_tv, NULL);
 	while (game.loop || -1 != game.sfx) {
