@@ -3,3 +3,9 @@ Remove te need for ":" for the server
 Animate the disparition of the completed lines
 Migrate from char arrays to uint16_t
 Handle read errors when relevant in keypresses reads
+Unblock the rotation of the | piece when at the top
+Tune the progression of the difficulty
+Try to pre-read the next chunks of audio data
+
+bug : the number of remaining line isn't printed at the start of the game b
+bug : the "high" word isn't printed in game b
