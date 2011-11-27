@@ -214,6 +214,8 @@ struct {
 	int high;     /**< Height of the handicap */
 	int lvl;      /**< Speed of pieces dropping */
 	int lines;    /**< Number of lines achieved so far */
+	/**< Indexes of the lines that have been completed */
+	int comp_lines[4];
 	int score;    /**< Current score of the player */
 	int period;   /**< Number of loop passes between two automatic drops */
 	int pause;    /**< If true, the game is suspended */
@@ -229,23 +231,24 @@ struct {
 	/** status when the game is finished */
 	enum end_status status;
 } game = {
-		.mode =     'a',
-		.high =     0,
-		.lvl =      0,
-		.lines =    0,
-		.score =    0,
-		.period =   INITIAL_PERIOD,
-		.pause =    0,
-		.height =   0,
-		.void_col = 0,
-		.loop =     1,
-		.freeze =   0,
-		.music =    0,
-		.dsp =      -1,
-		.bgm =      -1,
-		.sfx =      -1,
-		.status =   END_NONE,
-		.suspended = 0,
+		.mode =       'a',
+		.high =       0,
+		.lvl =        0,
+		.lines =      0,
+		.comp_lines = {-1, -1, -1, -1},
+		.score =       0,
+		.period =     INITIAL_PERIOD,
+		.pause =      0,
+		.height =     0,
+		.void_col =   0,
+		.loop =       1,
+		.freeze =     0,
+		.music =      0,
+		.dsp =        -1,
+		.bgm =        -1,
+		.sfx =        -1,
+		.status =     END_NONE,
+		.suspended =  0,
 };
 
 /**
@@ -1065,11 +1068,10 @@ void complete_line(int line) {
  * them, updates the score and send a message to the remote in case of multiple
  * lines.
  */
-void check_lines() {
+int check_lines() {
 	int i, j;
 	int line_complete = 1;
 	int total = 0;
-	int coef[5] = {0, 40, 100, 300, 1200};
 
 	for (j = 0; j < 18; j++) {
 		for (i = 1; i < 11; i++) {
@@ -1078,10 +1080,8 @@ void check_lines() {
 				break;
 			}
 		}
-		if (line_complete) {
-			complete_line(j);
-			total++;
-		}
+		if (line_complete)
+			game.comp_lines[total++] = j;
 		line_complete = 1;
 	}
 
@@ -1092,16 +1092,10 @@ void check_lines() {
 		else
 			play_sfx(SFX_LINE);
 		game.suspended = 60;
+		draw_current_piece(0);
 	}
 
-	/* update score */
-	game.score += coef[total] * (game.lvl + 1);
-	if ('b' != game.mode) {
-		print_number(17, 3, game.score);
-	}
-
-	if (net.mode && total > 1)
-		send_msg(MSG_LINES, total - 1);
+	return total != 0;
 }
 
 /**
@@ -1389,8 +1383,8 @@ void piece_hit() {
 	fix_piece();
 	get_next();
 	current.hit = 0;
-	check_lines();
-	draw_current_piece(1);
+	if (!check_lines())
+		draw_current_piece(1);
 	if (!can_move()) {
 		game.loop = 0;
 		game.status = END_LOST;
@@ -1707,6 +1701,60 @@ void update_lost(void) {
 	stage++;
 }
 
+/**
+ * Hide / shows a line of a given index
+ * @param line Index of the line from 0 at the top
+ * @param hide Hides the l in if non-zero, otherwise show it
+ */
+void blink_line(int line, int hide) {
+	int i;
+
+	for (i = 1; i < 11; i++)
+		if (board[line][i] != ' ') {
+			put_cur(i, line);
+			put_color(hide ? 0 : board[line][i] - '0');
+		}
+}
+
+/**
+ * Removes all the lines theat hae been completed
+ */
+void remove_lines() {
+	int i;
+	int coef[5] = {0, 40, 100, 300, 1200};
+
+	for (i = 0; game.comp_lines[i] != -1; i++) {
+		complete_line(game.comp_lines[i]);
+		game.comp_lines[i] = -1;
+	}
+
+	/* update score */
+	game.score += coef[i] * (game.lvl + 1);
+	if ('b' != game.mode) {
+		print_number(17, 3, game.score);
+	}
+
+	if (net.mode && i > 1)
+		send_msg(MSG_LINES, i - 1);
+
+	draw_current_piece(1);
+}
+
+/**
+ * Updates the blinking of the lines that have been completed and will be
+ * removed
+ */
+void update_lines_blink(void) {
+	int i;
+
+	if (0 == game.suspended % 10)
+		for (i = 0; game.comp_lines[i] != -1; i++)
+			blink_line(game.comp_lines[i], 0 == game.suspended % 20);
+
+	if (1 == game.suspended)
+		remove_lines();
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int ret;
@@ -1778,8 +1826,10 @@ int main(int argc, char *argv[]) {
 		if (1 == game.suspended)
 			while (read(0, &key, 1) != -1);
 
-		if (game.suspended)
+		if (game.suspended) {
 			game.suspended--;
+			update_lines_blink();
+		}
 		if (game.music)
 			update_music();
 		if (END_LOST == game.status)
