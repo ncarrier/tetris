@@ -1,6 +1,4 @@
 Accept any address form
-Remove te need for ":" for the server
-Animate the disparition of the completed lines
 Migrate from char arrays to uint16_t
 Handle read errors when relevant in keypresses reads
 Unblock the rotation of the | piece when at the top

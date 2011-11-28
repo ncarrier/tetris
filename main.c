@@ -1316,22 +1316,20 @@ void process_args(int argc, char *argv[]) {
 		case 'b':
 			if (argc >= 3)
 				process_lvl_high_args(argc - 2, argv + 2);
-			// game.lines = 2;
 			game.lines = 25;
 			break;
 
 		case '2':
+			net.mode = NET_SERVER;
 			if (argc < 3) {
-				usage();
-				_exit(1);
+				net.port = NET_DEFAULT_PORT;
+				break;
 			}
-			if (':' == argv[2][0]) {
-				net.mode = NET_SERVER;
+			if (':' == argv[2][0])
 				net.port = read_port(argv[2] + 1);
-			} else {
+			else {
 				char *p = NULL;
 
-				WRITES("Client mode\n");
 				net.mode = NET_CLIENT;
 				p = net.addr = argv[2];
 				for (; ':' != *p && '\0' != *p; p++);
@@ -1687,15 +1685,18 @@ void smooth_time(struct timeval tv, struct timeval old_tv) {
  */
 void update_lost(void) {
 	static int stage = 0;
-	int color;
-	int i;
-	int ordinate = 17 - (stage / 3);
 
-	if (0 == stage % 3 && ordinate >= 0) {
-		for (i = 1; i < 11; i++) {
-			color = my_random(0) % 7;
-			put_cur(i, ordinate);
-			put_color(color);
+	if (0 == stage % 2) {
+		int color;
+		int i;
+		int ordinate = 17 - (stage / 2);
+
+		if (ordinate >= 0) {
+			for (i = 1; i < 11; i++) {
+				color = my_random(0) % 7;
+				put_cur(i, ordinate);
+				put_color(color);
+			}
 		}
 	}
 	stage++;
@@ -1717,7 +1718,7 @@ void blink_line(int line, int hide) {
 }
 
 /**
- * Removes all the lines theat hae been completed
+ * Removes all the lines that have been completed
  */
 void remove_lines() {
 	int i;
@@ -1749,7 +1750,7 @@ void update_lines_blink(void) {
 
 	if (0 == game.suspended % 10)
 		for (i = 0; game.comp_lines[i] != -1; i++)
-			blink_line(game.comp_lines[i], 0 == game.suspended % 20);
+			blink_line(game.comp_lines[i], 0 != game.suspended % 20);
 
 	if (1 == game.suspended)
 		remove_lines();
