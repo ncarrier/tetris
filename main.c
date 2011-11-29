@@ -244,6 +244,10 @@ struct {
 	int suspended;/**< Number of frame during when the game is suspended */
 	/** status when the game is finished */
 	enum end_status status;
+	/** audio buffer */
+	char snd_buf[BUF_SIZE];
+	/** length of the data to put into the audio buffer */
+	size_t chunk_len;
 } game = {
 		.mode =       'a',
 		.high =       0,
@@ -263,6 +267,8 @@ struct {
 		.sfx =        -1,
 		.status =     END_NONE,
 		.suspended =  0,
+		.snd_buf =    {0},
+		.chunk_len =  0,
 };
 
 /**
@@ -1595,6 +1601,35 @@ void display_result(char msg) {
 	usleep(2000000);
 }
 
+/**
+ * Personal implementation of stdlib's memset
+ */
+void *memset(void *s, int c, size_t n) {
+	char *p = s;
+
+	if (NULL == p)
+		return p;
+
+	while (n--)
+		*(p++) = (char)c;
+
+	return s;
+}
+
+/**
+ * Personal implementation of stdlib's memcpy
+ */
+void *memcpy(void *dest, const void *src, size_t n) {
+	char *d = dest;
+	const char *s = src;
+
+	if (NULL == d || NULL == s)
+		return d;
+	while (n--)
+		*(d++) = *(s++);
+
+	return dest;
+}
 int config_music() {
 	int ret = -1;
 	int rate = 44100;
@@ -1607,6 +1642,7 @@ int config_music() {
 		WRITES("error : open dsp\n");
 		return 0;
 	}
+	memset(game.snd_buf, 127, BUF_SIZE);
 	if (-1 == game.bgm)
 		WRITES("no bgm\n");
 	/* set samplerate */
@@ -1639,18 +1675,24 @@ int config_music() {
  * card
  */
 void update_music() {
+	int ret = -1;
 	int ret_bgm = -1;
 	int ret_sfx = -1;
 	unsigned char buf_bgm[BUF_SIZE] = {0};
 	unsigned char buf_sfx[BUF_SIZE];
 	int i = 0;
 
+	/* play the chunk previously loaded */
+	ret = write(game.dsp, game.snd_buf, game.chunk_len);
+	if (-1 == ret)
+		WRITES("error : write\n");
+
 	/* read bgm */
 	if (-1 == game.bgm || game.pause || !game.loop) {
 		/* no bgm */
 		ret_bgm = BUF_SIZE;
 		for  (i = 0; i < BUF_SIZE; i++)
-			buf_bgm[i] = 128;
+			buf_bgm[i] = 127;
 	} else
 		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
 	if (-1 == ret_bgm && errno == EAGAIN)
@@ -1676,13 +1718,12 @@ void update_music() {
 			else if (-1 != game.sfx)
 				for (i = 0; i < ret_sfx; i++)
 					buf_bgm[i] = (unsigned char)(buf_bgm[i]
-						      + buf_sfx[i] - 128);
+						      + buf_sfx[i] - 127);
 		}
 
 		/* play the result */
-		ret_bgm = write(game.dsp, buf_bgm, (size_t)ret_bgm);
-		if (-1 == ret_bgm)
-			WRITES("error : write\n");
+		memcpy(game.snd_buf, buf_bgm, (size_t)ret_bgm);
+		game.chunk_len = (size_t)ret_bgm;
 	}
 }
 
@@ -1810,8 +1851,6 @@ int main(int argc, char *argv[]) {
 	current.next_piece = my_random(0) % 7;
 	get_next();
 	draw_current_piece(1);
-
-	usleep(1000000);
 
 	gettimeofday(&old_tv, NULL);
 	while (game.loop || -1 != game.sfx) {
