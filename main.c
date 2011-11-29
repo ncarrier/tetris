@@ -1820,7 +1820,9 @@ int main(int argc, char *argv[]) {
 		gettimeofday(&old_tv, NULL);
 
 		if (game.loop && END_NONE == game.status && !game.suspended) {
-			if (read(0, &key, 1));
+			if (-1 == read(0, &key, 1))
+				if (EAGAIN != errno)
+					game.loop = 0;
 			if (key)
 				moved_down = check_keys(key);
 			if (frame >= game.period)
