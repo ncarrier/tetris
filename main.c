@@ -1114,7 +1114,7 @@ int check_lines() {
 			play_sfx(SFX_TETRIS);
 		else
 			play_sfx(SFX_LINE);
-		game.suspended = 60;
+		game.suspended = 120;
 		draw_current_piece(0);
 	}
 
@@ -1770,10 +1770,10 @@ void remove_lines() {
 void update_lines_blink(void) {
 	int i;
 
-	if (0 == (game.suspended % 10))
+	if (0 == (game.suspended % 20))
 		for (i = 0; game.comp_lines[i] != -1 && i < 4; i++)
 			blink_line(game.comp_lines[i],
-					0 != (game.suspended % 20));
+					0 == (game.suspended % 40));
 
 	if (1 == game.suspended)
 		remove_lines();
