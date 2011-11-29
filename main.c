@@ -45,19 +45,19 @@
  * \def INITIAL_PERIOD
  * \brief Number of cycles it takes a piece to drop of 1
  */
-#define INITIAL_PERIOD 50
+#define INITIAL_PERIOD 100
 
 /**
  * \def INTER_FRAME
  * \brief Approximate inter-frame duration
  */
-#define INTER_FRAME 23000
+#define INTER_FRAME 11500
 
 /**
  * \def BUF_SIZE
  * \brief Size of the audio buffers
  */
-#define BUF_SIZE 2048
+#define BUF_SIZE 1024
 
 /**
  * \def SFX
@@ -145,6 +145,14 @@
  * associated value
  */
 #define MSG_BUILD(code, value) ((char)((code) | (value)))
+
+/**
+ * \var period
+ * \brief Array of the periods which define the speed of the game
+ * TODO tune that, and make it last up to lvl... hum 30 ?
+ */
+static const int period[] = {100, 87, 75, 64, 54,  45, 37, 30, 24, 19,
+	15, 12, 10, 9, 8,  7, 6, 5, 4, 3};
 
 /**
  * \var clear
@@ -242,7 +250,7 @@ struct {
 		.lvl =        0,
 		.lines =      0,
 		.comp_lines = {-1, -1, -1, -1},
-		.score =       0,
+		.score =      0,
 		.period =     INITIAL_PERIOD,
 		.pause =      0,
 		.height =     0,
@@ -1072,7 +1080,7 @@ void complete_line(int line) {
 		put_cur(16, 11);
 		WRITE(' ');
 	}
-	game.period = INITIAL_PERIOD - 2 * game.lvl;
+	game.period = period[game.lvl];
 }
 
 /**
@@ -1312,7 +1320,7 @@ void process_lvl_high_args(int argc, char *argv[]) {
 	if (game.lvl > 9 || game.lvl < 0)
 		game.lvl = 0;
 
-	game.period = INITIAL_PERIOD - 2 * game.lvl;
+	game.period = period[game.lvl];
 }
 
 /**
@@ -1735,7 +1743,7 @@ void remove_lines() {
 	int i;
 	int coef[5] = {0, 40, 100, 300, 1200};
 
-	for (i = 0; game.comp_lines[i] != -1; i++) {
+	for (i = 0; game.comp_lines[i] != -1 && i < 4; i++) {
 		complete_line(game.comp_lines[i]);
 		game.comp_lines[i] = -1;
 	}
@@ -1759,9 +1767,10 @@ void remove_lines() {
 void update_lines_blink(void) {
 	int i;
 
-	if (0 == game.suspended % 10)
-		for (i = 0; game.comp_lines[i] != -1; i++)
-			blink_line(game.comp_lines[i], 0 != game.suspended % 20);
+	if (0 == (game.suspended % 10))
+		for (i = 0; game.comp_lines[i] != -1 && i < 4; i++)
+			blink_line(game.comp_lines[i],
+					0 != (game.suspended % 20));
 
 	if (1 == game.suspended)
 		remove_lines();
