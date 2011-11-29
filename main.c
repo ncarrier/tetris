@@ -1607,10 +1607,8 @@ int config_music() {
 		WRITES("error : open dsp\n");
 		return 0;
 	}
-	if (-1 == game.bgm) {
-		WRITES("error : open bgm\n");
-		return 0;
-	}
+	if (-1 == game.bgm)
+		WRITES("no bgm\n");
 	/* set samplerate */
 	ret = ioctl(game.dsp, SNDCTL_DSP_SPEED, &rate);
 	if (-1 == ret) {
@@ -1648,7 +1646,8 @@ void update_music() {
 	int i = 0;
 
 	/* read bgm */
-	if (0 || game.pause || !game.loop) {
+	if (-1 == game.bgm || game.pause || !game.loop) {
+		/* no bgm */
 		ret_bgm = BUF_SIZE;
 		for  (i = 0; i < BUF_SIZE; i++)
 			buf_bgm[i] = 128;
@@ -1676,7 +1675,8 @@ void update_music() {
 			}
 			else if (-1 != game.sfx)
 				for (i = 0; i < ret_sfx; i++)
-					buf_bgm[i] = (unsigned char)(buf_bgm[i] + buf_sfx[i] - 128);
+					buf_bgm[i] = (unsigned char)(buf_bgm[i]
+						      + buf_sfx[i] - 128);
 		}
 
 		/* play the result */
