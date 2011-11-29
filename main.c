@@ -65,6 +65,12 @@
  */
 #define SFX "sound/sfx/"
 
+/**
+ * \def GAME_B_LINES
+ * \brief Number of lines to complete in game b
+ */
+#define GAME_B_LINES 25
+
 /* Network modes */
 /**
  * \def NET_NONE
@@ -668,6 +674,12 @@ void print_board() {
 			else
 				WRITE(board[y][x]);
 		}
+	}
+	if ('b' == game.mode) {
+		put_cur(12, 1);
+		WRITES("high ");
+		print_number(17, 11, game.lines);
+		print_number(17, 3, game.high);
 	}
 
 	print_number(17, 7, game.lvl);
@@ -1316,7 +1328,7 @@ void process_args(int argc, char *argv[]) {
 		case 'b':
 			if (argc >= 3)
 				process_lvl_high_args(argc - 2, argv + 2);
-			game.lines = 25;
+			game.lines = GAME_B_LINES;
 			break;
 
 		case '2':
@@ -1432,7 +1444,6 @@ int config_io(void) {
 
 	WRITES(civis);
 	WRITES(clear);
-	print_board();
 
 	return 0;
 }
@@ -1782,6 +1793,7 @@ int main(int argc, char *argv[]) {
 	ret = config_io();
 	if (-1 == ret)
 		goto out;
+	print_board();
 
 	current.next_piece = my_random(0) % 7;
 	get_next();
