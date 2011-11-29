@@ -43,6 +43,3 @@ Quick start
       ./tetris 2 4 3
    2 player, on the client :
       ./tetris 2 ip_address_of_the_client:
-
-Known bugs
-   The bar piece can't rotate at the top of the board

@@ -558,8 +558,8 @@ void play_sfx(enum sfx fx) {
 
 /**
  * Place the cursor at a given position
- * @param x Abscissa in [0,99]
- * @param y Ordinate in [0,99]
+ * @param x Abscissa in [0,98]
+ * @param y Ordinate in [0,98]
  */
 inline void put_cur(int x, int y) {
 	x++;
@@ -788,7 +788,10 @@ int can_move() {
 		for (j = 0; j < 4; j++)
 			if (PIXEL_LIT(GET_IMG(scale, current.piece, current.next_ori), i, j) &&
 					' ' != board[current.next_y + j][1 + current.next_x + i])
-				return 0;
+				if (current.next_y + j <= 18 &&
+						current.next_y + j >= 0 &&
+						current.next_x + i <= 11)
+					return 0;
 
 	return 1;
 }
@@ -1826,8 +1829,10 @@ int main(int argc, char *argv[]) {
 				frame = 0;
 			moved_down = 0;
 
-			if (current.hit)
+			if (current.hit) {
 				piece_hit();
+				frame = 0;
+			}
 
 			if (game.freeze)
 				game.freeze--;

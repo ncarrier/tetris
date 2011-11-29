@@ -3,5 +3,3 @@ Migrate from char arrays to uint16_t
 Handle read errors when relevant in keypresses reads
 Try to pre-read the next chunks of audio data
 Makefile
-
-bug : The rotation of the | piece is blocked when at the top
