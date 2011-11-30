@@ -1,3 +1,1 @@
-Migrate from char arrays to uint16_t
-Investigate about mmap to avoid sound cracks
 Makefile with android target
