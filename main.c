@@ -1646,16 +1646,22 @@ int config_music() {
 	int rate = 44100;
 	int channels = 2;
 	int i;
+	char *buf[BUF_SIZE];
 
 	game.dsp = open("/dev/dsp", O_RDWR);
-	game.bgm = open("sound/bgm.raw", O_RDONLY);
 	if (-1 == game.dsp) {
 		WRITES("error : open dsp\n");
 		return 0;
 	}
 	memset(game.snd_buf, 127, BUF_SIZE);
+	game.bgm = open("sound/bgm.raw", O_RDONLY);
 	if (-1 == game.bgm)
 		WRITES("no bgm\n");
+	else {
+		while (read(game.bgm, buf, BUF_SIZE) != 0);
+		lseek(game.bgm, 0, SEEK_SET);
+	}
+
 	/* set samplerate */
 	ret = ioctl(game.dsp, SNDCTL_DSP_SPEED, &rate);
 	if (-1 == ret) {
@@ -1675,6 +1681,9 @@ int config_music() {
 			WRITES("error : opening ");
 			WRITES(sfx_file[i].path);
 			WRITE('\n');
+		} else {
+			while (read(sfx_file[i].fd, buf, BUF_SIZE) != 0);
+			lseek(sfx_file[i].fd, 0, SEEK_SET);
 		}
 	}
 	
