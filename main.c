@@ -304,14 +304,14 @@ struct {
  *    0000 0
  * hence 0x4C40
  */
-typedef uint16_t image;
+typedef const uint16_t image;
 
 /**
  * \def PIXEL_LIT
  * \brief Returns true if the pixel at the coordinates (x, y) is lit. im is a
  * pointer on an image
  */
-#define PIXEL_LIT(im, x, y) ((1 << ((3 - x) + 4 * (3 - y))) & (*(im)))
+#define PIXEL_LIT(im, x, y) ((1 << ((3 - x) + 4 * (3 - y))) & ((im)))
 
 /**
  * \def GET_IMG
@@ -324,84 +324,51 @@ typedef uint16_t image;
  * \def VALID_IMG
  * \brief Decides if the image pointed is valid or not
  */
-#define VALID_IMG(im) ((im) != NULL)
+#define VALID_IMG(im) ((im) != 0X0000)
+
+typedef const image sprite[5];
 
 /**
- * \var A0
- * \brief line shaped piece
+ * \var A
+ * \brief Line shaped piece
  */
-static const image A0 = 0x00F0;
-
-static const image A1 = 0x4444;
+static const sprite A = {0x00F0, 0x4444, 0x0000, 0x0000, 0x0000};
 
 /**
- * \var B0
+ * \var B
  * \brief Block shaped piece
  */
-#undef B0 /* Baud rate constant from termios.h */
-static const image B0 = 0x0660;
+static const sprite B = {0x0660, 0x0000, 0x0000, 0x0000, 0x0000};
 
 /**
- * \var C0
+ * \var C
  * \brief Tee shaped piece
  */
-static const image C0 = 0X0E40;
-
-static const image C1 = 0x4C40;
-
-static const image C2 = 0x4E00;
-
-static const image C3 = 0x4640;
+static const sprite C = {0x0E40, 0x4C40, 0x4E00, 0x4640, 0x0000};
 
 /**
- * \var D0
+ * \var D
  * \brief S shaped piece
  */
-static const image D0 = 0x06C0;
-
-static const image D1 = 0x8C40;
+static const sprite D = {0x06C0, 0x8C40, 0x0000, 0x0000, 0x0000};
 
 /**
- * \var E0
+ * \var E
  * \brief Z shaped piece
  */
-static const image E0 = 0x0C60;
-
-static const image E1 = 0x4C80;
+static const sprite E = {0x0C60, 0x4C80, 0x0000, 0x0000, 0x0000};
 
 /**
- * \var F0
+ * \var F
  * \brief L shaped piece
  */
-static const image F0 = 0x0E80;
-
-static const image F1 = 0xC440;
-
-static const image F2 = 0x2E00;
-
-static const image F3 = 0x4460;
+static const sprite F = {0x0E80, 0xC440, 0x2E00, 0x4460, 0x0000};
 
 /**
- * \var G0
+ * \var G
  * \brief J shaped piece
  */
-static const image G0 = 0x0e20;
-
-static const image G1 = 0x44C0;
-
-static const image G2 = 0x8E00;
-
-static const image G3 = 0x6440;
-
-typedef image const *sprite[5];
-
-static const sprite A = {&A0,  &A1, NULL, NULL, NULL};
-static const sprite B = {&B0, NULL, NULL, NULL, NULL};
-static const sprite C = {&C0,  &C1,  &C2,  &C3, NULL};
-static const sprite D = {&D0,  &D1, NULL, NULL, NULL};
-static const sprite E = {&E0,  &E1, NULL, NULL, NULL};
-static const sprite F = {&F0,  &F1,  &F2,  &F3, NULL};
-static const sprite G = {&G0,  &G1,  &G2,  &G3, NULL};
+static const sprite G = {0x0E20, 0x44C0, 0x8E00, 0x6440, 0x0000};
 
 sprite const *scale[7] = {&A, &B, &C, &D, &E, &F, &G};
 
