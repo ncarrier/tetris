@@ -8,6 +8,7 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 
 #include <errno.h>
 #include <inttypes.h>
@@ -94,7 +95,7 @@
  * \def NET_DEFAULT_PORT
  * \brief Default port used for two player mode
  */
-#define NET_DEFAULT_PORT 37280
+#define NET_DEFAULT_PORT "37280"
 
 /* Message codes are on the first (big) 3 bytes, value on the last five */
 /**
@@ -279,7 +280,7 @@ struct {
 struct {
 	int mode;   /**< One of NET_NONE, NET_SERVER and NET_CLIENT */
 	char *addr; /**< Dotted numerical address of the server */
-	int port;   /**< Port number of the connection */
+	char *port; /**< Port number of the connection */
 	int sfd;    /**< Socket of the server, only used by the server */
 	int fd;     /**< socket of the remote host */
 	int pending_lines; /**< Number of lines to send to the remote */
@@ -1194,7 +1195,7 @@ int atoi(char *nptr) {
 	int ret = 0;
 
 	while (*nptr >= '0' && *nptr <= '9') {
-		ret += *nptr - '0';
+		ret = 10 * ret + *nptr - '0';
 		nptr++;
 	}
 
@@ -1202,20 +1203,24 @@ int atoi(char *nptr) {
 }
 
 /**
- * Reads the port number from a string
+ * Checks the port number from a string, and sets it to default port if invalid
  * @param port String containing the port number
  * @return Port read, in [1025,65536]
  */
-int read_port(char *port) {
-	int ret;
+char *read_port(char *port) {
+	int port_num = atoi(port);
+	int i;
 
-	ret = atoi(port);
-	if (0 == ret)
-		ret = NET_DEFAULT_PORT;
+	/* check for invalid chars */
+	for (i = 0; port[i]; i++)
+		if (port[i] > '9' || port[i] < '0')
+			return NET_DEFAULT_PORT;
+
+	/* check the port is in the valida range and non-priviledged */
+	if (port_num < 1024 || port_num > 65535)
+		return NET_DEFAULT_PORT;
 	else
-		ret = MIN(1025, MAX(ret, 65536));
-
-	return ret;
+		return port;
 }
 
 /**
@@ -1245,7 +1250,7 @@ int set_up_server() {
 	}
 	sin.sin_addr.s_addr = htonl(INADDR_ANY);
 	sin.sin_family = AF_INET;
-	sin.sin_port = htons((uint16_t)net.port);
+	sin.sin_port = htons((uint16_t)atoi(net.port));
 	ret = bind(net.sfd, (struct sockaddr*)(&sin), sizeof(sin));
 	if (-1 == ret) {
 		WRITES("error : bind\n");
@@ -1275,32 +1280,53 @@ int set_up_server() {
 }
 
 /**
+ * Personal implementation of stdlib's memset
+ */
+void *memset(void *s, int c, size_t n) {
+	char *p = s;
+
+	if (NULL == p)
+		return p;
+
+	while (n--)
+		*(p++) = (char)c;
+
+	return s;
+}
+
+/**
  * Configures the client in a 2 player game
  * @return -1 in case of error, otherwise 0
  */
 int set_up_client() {
 	int ret = -1;
-	struct sockaddr_in sin;
 	int flags = -1;
+	struct addrinfo filter;
+	struct addrinfo *host = NULL;
 
-	sin.sin_addr.s_addr = inet_addr(net.addr);
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons((uint16_t)net.port);
+	memset(&filter, 0, sizeof(struct addrinfo));
+	filter.ai_family = AF_INET;
+	filter.ai_socktype = SOCK_STREAM;
+	ret = getaddrinfo(net.addr, net.port, &filter, &host);
+	if (0 != ret) {
+		WRITES("getaddrinfo : ");
+		WRITES(gai_strerror(ret));
+		return -1;
+	}
 
-	net.fd = socket(AF_INET, SOCK_STREAM, 0);
+	net.fd = socket(host->ai_family, host->ai_socktype, host->ai_protocol);
 	if (-1 == net.fd) {
 		WRITES("error : socket\n");
 		return -1;
 	}
-	WRITES("Connection to ");
-	WRITES(net.addr);
-	WRITE('\n');
-	ret = connect(net.fd, (struct sockaddr *)(&sin), sizeof(sin));
+	ret = connect(net.fd, host->ai_addr, host->ai_addrlen);
 	if (-1 == ret) {
-		WRITES("error : connect\n");
+		WRITES("error : connect");
 		return -1;
 	}
 	WRITES("Connected to the server\n");
+	freeaddrinfo(host);
+
 	flags = fcntl(net.fd, F_GETFL);
 	if (-1 == flags)
 		return -1;
@@ -1599,21 +1625,6 @@ void display_result(char msg) {
 	}
 
 	usleep(2000000);
-}
-
-/**
- * Personal implementation of stdlib's memset
- */
-void *memset(void *s, int c, size_t n) {
-	char *p = s;
-
-	if (NULL == p)
-		return p;
-
-	while (n--)
-		*(p++) = (char)c;
-
-	return s;
 }
 
 /**
