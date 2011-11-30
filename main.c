@@ -295,181 +295,103 @@ struct {
 
 /**
  * \typedef image
- * \brief type of the image a o given rotation of a piece
- * TODO define it as 2 bytes (uint16_t if no better choice) and add a getter
- * for A0, it will give :0000 0000 1111 0000, hence 0x00F0
+ * \brief type of the image a given rotation of a piece. One image is a rotation
+ * of the basic piece, it is stored as a binary bitmap, in 2 bytes. For example,
+ * the first rotation of the T piece will give :
+ *    0100 4
+ *    1100 C
+ *    0100 4
+ *    0000 0
+ * hence 0x4C40
  */
-typedef char image[4][4];
+typedef uint16_t image;
 
-//#define PIXEL_LIT(im, x, y) (((1 << (x)) + 4 * (y)) & im)
-#define PIXEL_LIT(im, x, y) (' ' != (*(im))[(y)][(x)])
+/**
+ * \def PIXEL_LIT
+ * \brief Returns true if the pixel at the coordinates (x, y) is lit. im is a
+ * pointer on an image
+ */
+#define PIXEL_LIT(im, x, y) ((1 << ((3 - x) + 4 * (3 - y))) & (*(im)))
 
-// Retourne un pointeur sur l'image
+/**
+ * \def GET_IMG
+ * \brief Returns the image corresponding to a given orientation for a given
+ * piece
+ */
 #define GET_IMG(scl, piece, ori) ((*((scl)[(piece)]))[(ori)])
 
+/**
+ * \def VALID_IMG
+ * \brief Decides if the image pointed is valid or not
+ */
 #define VALID_IMG(im) ((im) != NULL)
 
 /**
  * \var A0
  * \brief line shaped piece
  */
-static const image A0 = {
-	{' ', ' ', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-	{'L', 'L', 'L', 'L'},
-	{' ', ' ', ' ', ' '},
-};
+static const image A0 = 0x00F0;
 
-static const image A1 = {
-	{' ', 'L', ' ', ' '},
-	{' ', 'L', ' ', ' '},
-	{' ', 'L', ' ', ' '},
-	{' ', 'L', ' ', ' '},
-};
+static const image A1 = 0x4444;
 
 /**
  * \var B0
  * \brief Block shaped piece
  */
 #undef B0 /* Baud rate constant from termios.h */
-static const image B0 = {
-	{' ', ' ', ' ', ' '},
-	{' ', 'S', 'S', ' '},
-	{' ', 'S', 'S', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image B0 = 0x0660;
 
 /**
  * \var C0
  * \brief Tee shaped piece
  */
-static const image C0 = {
-	{' ', ' ', ' ', ' '},
-	{'D', 'D', 'D', ' '},
-	{' ', 'D', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image C0 = 0X0E40;
 
-static const image C1 = {
-	{' ', 'D', ' ', ' '},
-	{'D', 'D', ' ', ' '},
-	{' ', 'D', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image C1 = 0x4C40;
 
-static const image C2 = {
-	{' ', 'D', ' ', ' '},
-	{'D', 'D', 'D', ' '},
-	{' ', ' ', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image C2 = 0x4E00;
 
-static const image C3 = {
-	{' ', 'D', ' ', ' '},
-	{' ', 'D', 'D', ' '},
-	{' ', 'D', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image C3 = 0x4640;
 
 /**
  * \var D0
  * \brief S shaped piece
  */
-static const image D0 = {
-	{' ', ' ', ' ', ' '},
-	{' ', 'R', 'R', ' '},
-	{'R', 'R', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image D0 = 0x06C0;
 
-static const image D1 = {
-	{'R', ' ', ' ', ' '},
-	{'R', 'R', ' ', ' '},
-	{' ', 'R', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image D1 = 0x8C40;
 
 /**
  * \var E0
  * \brief Z shaped piece
  */
-static const image E0 = {
-	{' ', ' ', ' ', ' '},
-	{'M', 'M', ' ', ' '},
-	{' ', 'M', 'M', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image E0 = 0x0C60;
 
-static const image E1 = {
-	{' ', 'M', ' ', ' '},
-	{'M', 'M', ' ', ' '},
-	{'M', ' ', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image E1 = 0x4C80;
 
 /**
  * \var F0
  * \brief L shaped piece
  */
-static const image F0 = {
-	{' ', ' ', ' ', ' '},
-	{'F', 'F', 'F', ' '},
-	{'F', ' ', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image F0 = 0x0E80;
 
-static const image F1 = {
-	{'F', 'F', ' ', ' '},
-	{' ', 'F', ' ', ' '},
-	{' ', 'F', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image F1 = 0xC440;
 
-static const image F2 = {
-	{' ', ' ', 'F', ' '},
-	{'F', 'F', 'F', ' '},
-	{' ', ' ', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image F2 = 0x2E00;
 
-static const image F3 = {
-	{' ', 'F', ' ', ' '},
-	{' ', 'F', ' ', ' '},
-	{' ', 'F', 'F', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image F3 = 0x4460;
 
 /**
  * \var G0
  * \brief J shaped piece
  */
-static const image G0 = {
-	{' ', ' ', ' ', ' '},
-	{'S', 'S', 'S', ' '},
-	{' ', ' ', 'S', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image G0 = 0x0e20;
 
-static const image G1 = {
-	{' ', 'S', ' ', ' '},
-	{' ', 'S', ' ', ' '},
-	{'S', 'S', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image G1 = 0x44C0;
 
-static const image G2 = {
-	{'S', ' ', ' ', ' '},
-	{'S', 'S', 'S', ' '},
-	{' ', ' ', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image G2 = 0x8E00;
 
-static const image G3 = {
-	{' ', 'S', 'S', ' '},
-	{' ', 'S', ' ', ' '},
-	{' ', 'S', ' ', ' '},
-	{' ', ' ', ' ', ' '},
-};
+static const image G3 = 0x6440;
 
 typedef image const *sprite[5];
 
