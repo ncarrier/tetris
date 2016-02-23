@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <signal.h>
 
 #include <errno.h>
 #include <inttypes.h>
@@ -16,6 +17,9 @@
 #ifndef NULL
 #define NULL ((void*)0)
 #endif
+
+/* for signal handling */
+static volatile sig_atomic_t signal_received = 0;
 
 /* grid dimension : 10x18 */
 /**
@@ -1454,6 +1458,7 @@ int check_keys(int key) {
 			/* select */
 			break;
 
+		case 3:	/* CTRL-C */
 		case 0x1b: /* ESC */
 			/* quit */
 			if (read(0, &buf, 1) == 1)
@@ -1729,6 +1734,12 @@ void update_lines_blink(void) {
 		remove_lines();
 }
 
+/* signal handler */
+void sig_handler(int sig)
+{
+	signal_received = 1;
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int ret;
@@ -1736,11 +1747,16 @@ int main(int argc, char *argv[]) {
 	char msg;
 	int moved_down = 0;
 	struct timeval old_tv, tv;
+	struct sigaction sa;
 
 	/* init pseudo-random generator */
 	my_random(time(NULL));
 
 	process_args(argc, argv);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = sig_handler;
+	sigaction(SIGTERM, &sa, NULL);
 
 	ret = config_network();
 	if (-1 == ret)
@@ -1762,7 +1778,7 @@ int main(int argc, char *argv[]) {
 	draw_current_piece(1);
 
 	gettimeofday(&old_tv, NULL);
-	while (game.loop || -1 != game.sfx) {
+	while (!signal_received && (game.loop || -1 != game.sfx)) {
 		gettimeofday(&tv, NULL);
 		smooth_time(tv, old_tv);
 		gettimeofday(&old_tv, NULL);
@@ -1813,7 +1829,8 @@ int main(int argc, char *argv[]) {
 			update_lost();
 	}
 
-	display_result(msg);
+	if(!signal_received)
+		display_result(msg);
 
 	if (net.mode)
 		close_net();
