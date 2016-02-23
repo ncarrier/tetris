@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <signal.h>
 
 #include <errno.h>
 #include <inttypes.h>
@@ -16,6 +17,9 @@
 #ifndef NULL
 #define NULL ((void*)0)
 #endif
+
+/* for signal handling */
+static volatile sig_atomic_t signal_received = 0;
 
 /* grid dimension : 10x18 */
 /**
@@ -398,7 +402,7 @@ struct {
  */
 #define WRITE(c) do { \
 	char _buf = (char)(c); \
-	if (write(1, &_buf, 1)); \
+	write(1, &_buf, 1); \
 } while (0)
 
 /**
@@ -410,7 +414,7 @@ struct {
 	unsigned _i = 0; \
 	while (s[_i]) \
 		_i++; \
-	if (write(1, s, _i)); \
+	write(1, s, _i); \
 } while(0)
 
 enum sfx {
@@ -457,7 +461,7 @@ void play_sfx(enum sfx fx) {
  * @param x Abscissa in [0,98]
  * @param y Ordinate in [0,98]
  */
-inline void put_cur(int x, int y) {
+static void put_cur(int x, int y) {
 	x++;
 	y++;
 	WRITE(0x1b);
@@ -815,7 +819,7 @@ int send_msg(int code, int value) {
 	if (net.mode) {
 		char msg = MSG_BUILD(code, value);
 
-		return write(net.fd, &msg, sizeof(char));
+		return (int)write(net.fd, &msg, sizeof(char));
 	}
 
 	return -1;
@@ -874,7 +878,7 @@ void in_pause() {
 int read_msg(int *pending_lines, int *loop, char *msg) {
 	int ret = -1;
 
-	ret = read(net.fd, msg, 1);
+	ret = (int)read(net.fd, msg, 1);
 	switch (ret) {
 		case -1:
 			if (errno != EAGAIN) {
@@ -1030,7 +1034,7 @@ size_t strlen(const char *s) {
  * Adds random blocks to the grid, up to game's high factor, with a probability
  * of 7/20.
  */
-void add_crumbles() {
+void add_crumbles(void) {
 	int i, j;
 	char lut[] = "1234567             ";
 	int limit = 17 - 2 * game.high;
@@ -1298,7 +1302,7 @@ void process_args(int argc, char *argv[]) {
 		}
 	}
 
-	add_crumbles(game.high);
+	add_crumbles();
 }
 
 /**
@@ -1454,6 +1458,7 @@ int check_keys(int key) {
 			/* select */
 			break;
 
+		case 3:	/* CTRL-C */
 		case 0x1b: /* ESC */
 			/* quit */
 			if (read(0, &buf, 1) == 1)
@@ -1491,6 +1496,7 @@ void close_net()  {
  * @param msg Last network message received
  */
 void display_result(char msg) {
+	(void)msg;	/* XXX: msg parameter is unused */
 	switch (game.status) {
 		case END_WON:
 			print_msg(" YOU WON !", 4, 2);
@@ -1592,7 +1598,7 @@ void update_music() {
 	int i = 0;
 
 	/* play the chunk previously loaded */
-	ret = write(game.dsp, game.snd_buf, game.chunk_len);
+	ret = (int)write(game.dsp, game.snd_buf, game.chunk_len);
 	if (-1 == ret)
 		WRITES("error : write\n");
 
@@ -1603,14 +1609,14 @@ void update_music() {
 		for  (i = 0; i < BUF_SIZE; i++)
 			buf_bgm[i] = 127;
 	} else
-		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
+		ret_bgm = (int)read(game.bgm, buf_bgm, BUF_SIZE);
 	if (-1 == ret_bgm && errno == EAGAIN)
 		return;
 	if (-1 == ret_bgm)
 		WRITES("error : read\n");
 	if (ret_bgm <= 0) {
 		lseek(game.bgm, 0, SEEK_SET);
-		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
+		ret_bgm = (int)read(game.bgm, buf_bgm, BUF_SIZE);
 		if (-1 == ret_bgm)
 			WRITES("error : read\n");
 	}
@@ -1619,7 +1625,7 @@ void update_music() {
 		if (-1 != game.sfx) {
 			size_t sfx_chunk_len = (size_t)MIN(ret_bgm, BUF_SIZE);
 
-			ret_sfx = read(game.sfx, buf_sfx, sfx_chunk_len);
+			ret_sfx = (int)read(game.sfx, buf_sfx, sfx_chunk_len);
 			if (0 == ret_sfx) {
 				lseek(game.sfx, 0, SEEK_SET);
 				game.sfx = -1;
@@ -1729,6 +1735,13 @@ void update_lines_blink(void) {
 		remove_lines();
 }
 
+/* signal handler */
+void sig_handler(int sig)
+{
+	(void)sig;
+	signal_received = 1;
+}
+
 int main(int argc, char *argv[]) {
 	char key = 0;
 	int ret;
@@ -1736,11 +1749,16 @@ int main(int argc, char *argv[]) {
 	char msg;
 	int moved_down = 0;
 	struct timeval old_tv, tv;
+	struct sigaction sa;
 
 	/* init pseudo-random generator */
-	my_random(time(NULL));
+	my_random((int)time(NULL));
 
 	process_args(argc, argv);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = sig_handler;
+	sigaction(SIGTERM, &sa, NULL);
 
 	ret = config_network();
 	if (-1 == ret)
@@ -1762,7 +1780,7 @@ int main(int argc, char *argv[]) {
 	draw_current_piece(1);
 
 	gettimeofday(&old_tv, NULL);
-	while (game.loop || -1 != game.sfx) {
+	while (!signal_received && (game.loop || -1 != game.sfx)) {
 		gettimeofday(&tv, NULL);
 		smooth_time(tv, old_tv);
 		gettimeofday(&old_tv, NULL);
@@ -1813,7 +1831,8 @@ int main(int argc, char *argv[]) {
 			update_lost();
 	}
 
-	display_result(msg);
+	if(!signal_received)
+		display_result(msg);
 
 	if (net.mode)
 		close_net();
