@@ -1458,6 +1458,7 @@ int check_keys(int key) {
 			/* select */
 			break;
 
+		case 3:	/* CTRL-C */
 		case 0x1b: /* ESC */
 			/* quit */
 			if (read(0, &buf, 1) == 1)
