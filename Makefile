@@ -1,5 +1,6 @@
 CC ?= gcc
 CFLAGS = -Wall -Wconversion -O0 -g
+CFLAGS += -Wextra
 
 all:	tetris
 

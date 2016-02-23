@@ -402,7 +402,7 @@ struct {
  */
 #define WRITE(c) do { \
 	char _buf = (char)(c); \
-	if (write(1, &_buf, 1)); \
+	write(1, &_buf, 1); \
 } while (0)
 
 /**
@@ -414,7 +414,7 @@ struct {
 	unsigned _i = 0; \
 	while (s[_i]) \
 		_i++; \
-	if (write(1, s, _i)); \
+	write(1, s, _i); \
 } while(0)
 
 enum sfx {
@@ -461,7 +461,7 @@ void play_sfx(enum sfx fx) {
  * @param x Abscissa in [0,98]
  * @param y Ordinate in [0,98]
  */
-inline void put_cur(int x, int y) {
+static void put_cur(int x, int y) {
 	x++;
 	y++;
 	WRITE(0x1b);
@@ -1034,7 +1034,7 @@ size_t strlen(const char *s) {
  * Adds random blocks to the grid, up to game's high factor, with a probability
  * of 7/20.
  */
-void add_crumbles() {
+void add_crumbles(void) {
 	int i, j;
 	char lut[] = "1234567             ";
 	int limit = 17 - 2 * game.high;
@@ -1302,7 +1302,7 @@ void process_args(int argc, char *argv[]) {
 		}
 	}
 
-	add_crumbles(game.high);
+	add_crumbles();
 }
 
 /**
@@ -1496,6 +1496,7 @@ void close_net()  {
  * @param msg Last network message received
  */
 void display_result(char msg) {
+	(void)msg;	/* XXX: msg parameter is unused */
 	switch (game.status) {
 		case END_WON:
 			print_msg(" YOU WON !", 4, 2);
@@ -1737,6 +1738,7 @@ void update_lines_blink(void) {
 /* signal handler */
 void sig_handler(int sig)
 {
+	(void)sig;
 	signal_received = 1;
 }
 
