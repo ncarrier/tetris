@@ -819,7 +819,7 @@ int send_msg(int code, int value) {
 	if (net.mode) {
 		char msg = MSG_BUILD(code, value);
 
-		return write(net.fd, &msg, sizeof(char));
+		return (int)write(net.fd, &msg, sizeof(char));
 	}
 
 	return -1;
@@ -878,7 +878,7 @@ void in_pause() {
 int read_msg(int *pending_lines, int *loop, char *msg) {
 	int ret = -1;
 
-	ret = read(net.fd, msg, 1);
+	ret = (int)read(net.fd, msg, 1);
 	switch (ret) {
 		case -1:
 			if (errno != EAGAIN) {
@@ -1597,7 +1597,7 @@ void update_music() {
 	int i = 0;
 
 	/* play the chunk previously loaded */
-	ret = write(game.dsp, game.snd_buf, game.chunk_len);
+	ret = (int)write(game.dsp, game.snd_buf, game.chunk_len);
 	if (-1 == ret)
 		WRITES("error : write\n");
 
@@ -1608,14 +1608,14 @@ void update_music() {
 		for  (i = 0; i < BUF_SIZE; i++)
 			buf_bgm[i] = 127;
 	} else
-		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
+		ret_bgm = (int)read(game.bgm, buf_bgm, BUF_SIZE);
 	if (-1 == ret_bgm && errno == EAGAIN)
 		return;
 	if (-1 == ret_bgm)
 		WRITES("error : read\n");
 	if (ret_bgm <= 0) {
 		lseek(game.bgm, 0, SEEK_SET);
-		ret_bgm = read(game.bgm, buf_bgm, BUF_SIZE);
+		ret_bgm = (int)read(game.bgm, buf_bgm, BUF_SIZE);
 		if (-1 == ret_bgm)
 			WRITES("error : read\n");
 	}
@@ -1624,7 +1624,7 @@ void update_music() {
 		if (-1 != game.sfx) {
 			size_t sfx_chunk_len = (size_t)MIN(ret_bgm, BUF_SIZE);
 
-			ret_sfx = read(game.sfx, buf_sfx, sfx_chunk_len);
+			ret_sfx = (int)read(game.sfx, buf_sfx, sfx_chunk_len);
 			if (0 == ret_sfx) {
 				lseek(game.sfx, 0, SEEK_SET);
 				game.sfx = -1;
@@ -1750,7 +1750,7 @@ int main(int argc, char *argv[]) {
 	struct sigaction sa;
 
 	/* init pseudo-random generator */
-	my_random(time(NULL));
+	my_random((int)time(NULL));
 
 	process_args(argc, argv);
 
